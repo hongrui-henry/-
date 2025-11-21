@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>值日通 - 自动生成系统</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col items-center py-10">
+
+  <h1 class="text-3xl font-bold mb-6 text-blue-700">🧹 值日通 - 自动排班系统</h1>
+
+  <!-- 上传名单 -->
+  <div class="bg-white shadow-lg rounded-xl p-6 w-full max-w-md mb-8">
+    <h2 class="text-xl font-semibold mb-3 text-gray-700">👥 导入成员名单</h2>
+    <input id="fileInput" type="file" accept=".json,.xlsx,.csv" class="mb-3 w-full border rounded p-2" />
+    <div class="flex gap-2 mb-3">
+      <button id="uploadBtn" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
+        上传名单
+      </button>
+      <button id="downloadBtn" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded">
+        导出当前名单
+      </button>
+    </div>
+    <p id="memberInfo" class="text-sm text-gray-500 mt-2"></p>
+  </div>
+
+  <!-- 生成参数 -->
+  <div class="bg-white shadow-lg rounded-xl p-6 w-full max-w-md mb-8">
+    <label class="block mb-3">
+      <span class="text-gray-700">上课天数：</span>
+      <input id="days" type="number" class="border rounded p-2 w-full" placeholder="例如 5" />
+    </label>
+
+    <label class="block mb-3">
+      <span class="text-gray-700">每日值日人数：</span>
+      <input id="people" type="number" class="border rounded p-2 w-full" placeholder="例如 2" />
+    </label>
+
+    <label class="block mb-3">
+      <span class="text-gray-700">开始日期：</span>
+      <input id="startDate" type="date" class="border rounded p-2 w-full" />
+    </label>
+
+    <button id="generateBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded w-full">
+      生成值日计划
+    </button>
+  </div>
+
+  <!-- 结果表格 -->
+  <div id="resultSection" class="bg-white shadow-md rounded-xl p-6 w-full max-w-2xl hidden">
+    <h2 class="text-2xl font-semibold text-gray-800 mb-4">生成结果</h2>
+    <table class="min-w-full border border-gray-300 rounded-xl">
+      <thead class="bg-blue-100">
+        <tr>
+          <th class="border p-2">日期</th>
+          <th class="border p-2">值日组</th>
+        </tr>
+      </thead>
+      <tbody id="resultTable"></tbody>
+    </table>
+  </div>
+<!-- 监督记录区域 -->
+<div id="superviseArea" class="mt-8 hidden">
+  <h2 class="text-xl font-bold mb-3">监督记录</h2>
+
+  <label class="block mb-3">
+    <span class="text-gray-700">是否完成（1 完成 / 0 未完成）：</span>
+    <input id="finished" type="number" min="0" max="1" class="border p-2 rounded w-full">
+  </label>
+
+  <label class="block mb-3">
+    <span class="text-gray-700">整洁度评分（1–10）：</span>
+    <input id="cleanScore" type="number" min="1" max="10" class="border p-2 rounded w-full">
+  </label>
+
+  <label class="block mb-3">
+    <span class="text-gray-700">反馈评论：</span>
+    <textarea id="comment" class="border p-2 rounded w-full"></textarea>
+  </label>
+
+  <button id="superviseBtn" class="bg-green-600 text-white rounded p-2 w-full">提交监督</button>
+</div>
+
+  <script>
+    const uploadBtn = document.getElementById("uploadBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const fileInput = document.getElementById("fileInput");
+    const memberInfo = document.getElementById("memberInfo");
+
+    const btn = document.getElementById("generateBtn");
+    const tableBody = document.getElementById("resultTable");
+    const resultSection = document.getElementById("resultSection");
+
+    // 上传名单并自动补全缺失字段
+    uploadBtn.addEventListener("click", async () => {
+      const file = fileInput.files[0];
+      if (!file) return alert("请选择一个名单文件（支持 .json / .xlsx / .csv）");
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await fetch("http://localhost:3000/upload-members", {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "上传失败");
+
+        // 自动补全字段并生成汇报
+        const report = [];
+        data.members.forEach(m => {
+          const fixes = [];
+          if (m.能力 === undefined) { m.能力 = 5; fixes.push("能力=5"); }
+          if (m.可用 === undefined) { m.可用 = 1; fixes.push("可用=1"); }
+          if (m.次数 === undefined) { m.次数 = 0; fixes.push("次数=0"); }
+          if (fixes.length) report.push(`${m.name}: ${fixes.join(", ")}`);
+        });
+
+        memberInfo.innerHTML = `✅ 成功导入 ${data.count} 名成员` +
+          (report.length ? `<br>⚠️ 以下成员字段被自动补全：<br>${report.join("<br>")}` : "");
+
+      } catch (e) {
+        alert("文件上传失败：" + e.message);
+      }
+    });
+
+    // 导出当前名单
+    downloadBtn.addEventListener("click", () => {
+      window.location.href = "http://localhost:3000/download-members";
+    });
+
+    // 生成值日计划
+    btn.addEventListener("click", async () => {
+      const days = document.getElementById("days").value;
+      const people = document.getElementById("people").value;
+      const startDate = document.getElementById("startDate").value;
+
+      if (!days || !people || !startDate) {
+        alert("请填写所有参数！");
+        return;
+      }
+
+      tableBody.innerHTML = "";
+
+      try {
+        const response = await fetch("http://localhost:3000/generate-duty", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            days: Number(days),
+            peoplePerDay: Number(people),
+            startDate
+          })
+        });
+
+        if (!response.ok) throw new Error("后端响应错误");
+
+        const data = await response.json();
+        resultSection.classList.remove("hidden");
+
+        // 安全渲染 group
+        data.days.forEach((item, i) => {
+          const tr = document.createElement("tr");
+          const groupDisplay = Array.isArray(item.group)
+            ? item.group.join("、")
+            : "⚠️ 无法生成";
+          tr.innerHTML = `
+            <td class="border p-2 text-center">${item.date || `第 ${i + 1} 天`}</td>
+            <td class="border p-2 text-center">${groupDisplay}</td>
+          `;
+          tableBody.appendChild(tr);
+        });
+// 显示监督区域
+document.getElementById("superviseArea").classList.remove("hidden");
+
+// 最新一天的值日组（用于监督）
+let lastGroup = data.days[data.days.length - 1].group;
+
+document.getElementById("superviseBtn").onclick = async () => {
+  const finished = Number(document.getElementById("finished").value);
+  const cleanScore = Number(document.getElementById("cleanScore").value);
+  const comment = document.getElementById("comment").value;
+
+  try {
+    const res = await fetch("http://localhost:3000/submit-supervise", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        group: lastGroup,
+        finished,
+        cleanScore,
+        comment
+      })
+    });
+
+    const result = await res.json();
+    alert("监督提交成功！");
+  } catch (err) {
+    alert("监督提交失败：" + err.message);
+  }
+};
+
+      } catch (err) {
+        alert("生成失败：" + err.message);
+      }
+    });
+  </script>
+</body>
+</html>
