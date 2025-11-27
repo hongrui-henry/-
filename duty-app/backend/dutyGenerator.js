@@ -4,6 +4,7 @@ const path = require("path");
 
 const memberPath = path.join(__dirname, "members.json");
 const historyPath = path.join(__dirname, "history.json");
+// ⭐ 新增 supervise 文件路径（保存每日监督）
 const supervisePath = path.join(__dirname, "supervise.json");
 
 // 读取 JSON 文件
@@ -20,7 +21,7 @@ function writeJSON(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
 }
 
-// 生成值日名单（带自动清空历史）
+// 生成值日名单（核心逻辑）
 function generateDuty(days, peoplePerDay, startDate) {
   let members = readJSON(memberPath, []);
   let history = readJSON(historyPath, []);
@@ -28,7 +29,7 @@ function generateDuty(days, peoplePerDay, startDate) {
   // 筛选可用成员
   let available = members.filter(m => m.可用 === 1);
   if (available.length < peoplePerDay) {
-    throw new Error(`可用成员不足：当前可用人数 ${available.length}，但每天需要 ${peoplePerDay} 人。`);
+    throw new Error("可用人数不足");
   }
 
   // 计算平均能力
@@ -36,23 +37,21 @@ function generateDuty(days, peoplePerDay, startDate) {
 
   function groupScore(group) {
     const names = group.map(m => m.name);
-    // 检查是否在历史中
-    const usedBefore = history.some(h => names.every(n => h.includes(n)) && h.length === names.length);
-    if (usedBefore) return null;
+    // 如果该组出现过则跳过（完全相同）
+    if (history.some(h => names.every(n => h.includes(n)) && h.length === names.length)) return null;
 
     const avg = group.reduce((s, m) => s + m.能力, 0) / group.length;
     const abilityScore = Math.max(0, 10 - Math.abs(avg - avgAbility) * 2);
     const fairness = group.reduce((s, m) => s + (10 - m.次数), 0);
-    const randomness = Math.random() * 2 - 1;
+    const randomness = Math.random() * 2 - 1; // -1 到 +1 随机扰动
     return abilityScore + fairness + randomness;
   }
 
+  // 按天生成
   const result = [];
-
   for (let d = 0; d < days; d++) {
-    let combos = [];
-
-    // 生成所有可能组合
+    // 所有可能组合
+    const combos = [];
     for (let i = 0; i < available.length; i++) {
       for (let j = i + 1; j < available.length; j++) {
         const group = [available[i], available[j]];
@@ -61,13 +60,11 @@ function generateDuty(days, peoplePerDay, startDate) {
       }
     }
 
-    // ✅ 如果没有合法组合，自动清空历史并重新生成
+    // 如果没有可用组合，清空历史后再试一次
     if (combos.length === 0) {
-      console.log("⚠️ 所有组合均已出现，清空历史记录并重新开始...");
       history = [];
       writeJSON(historyPath, history);
 
-      // 重新计算一次组合
       for (let i = 0; i < available.length; i++) {
         for (let j = i + 1; j < available.length; j++) {
           const group = [available[i], available[j]];
@@ -76,15 +73,16 @@ function generateDuty(days, peoplePerDay, startDate) {
         }
       }
 
-      // 如果依然没有，说明成员太少
       if (combos.length === 0) {
-        throw new Error("即使清空历史后仍无法生成组合，请检查成员人数或数据。");
+        throw new Error("无法生成有效分组");
       }
     }
 
     combos.sort((a, b) => b.score - a.score);
     const topN = Math.max(1, Math.floor(combos.length / 10));
     const chosen = combos[Math.floor(Math.random() * topN)];
+
+    if (!chosen) throw new Error("无法生成有效分组");
 
     const names = chosen.group.map(m => m.name);
     history.push(names);
@@ -103,40 +101,13 @@ function generateDuty(days, peoplePerDay, startDate) {
 
   writeJSON(memberPath, members);
   writeJSON(historyPath, history);
-// ============================
-// 🌟 新增：监督系统数据处理函数
-// ============================
-const supervisePath = path.join(__dirname, "supervise.json");
-
-// 新增：应用监督评分到成员能力
-function applySuperviseUpdate(name, cleanScore) {
-  let members = readJSON(memberPath, []);
-  let supervise = readJSON(supervisePath, []);
-
-  const m = members.find(x => x.name === name);
-  if (!m) return;
-
-  // 记录监督结果
-  supervise.push({
-    name,
-    cleanScore,
-    time: new Date().toISOString()
-  });
-
-  // 调整能力：整洁度中位数 5 为基准，上下浮动能力
-  m.能力 = Math.min(10, Math.max(1, m.能力 + (cleanScore - 5) * 0.2));
-
-  writeJSON(memberPath, members);
-  writeJSON(supervisePath, supervise);
-}
 
   return result;
 }
 
-// ============================
-// 🌟 新增：监督系统数据处理函数
-// ============================
-
+// ====================
+// 新增：监督记录处理
+// ====================
 function applySuperviseUpdate(name, cleanScore) {
   let members = readJSON(memberPath, []);
   let supervise = readJSON(supervisePath, []);
@@ -144,19 +115,22 @@ function applySuperviseUpdate(name, cleanScore) {
   const m = members.find(x => x.name === name);
   if (!m) return;
 
-  // 写入监督记录
+  // 保存监督记录
   supervise.push({
     name,
     cleanScore,
     time: new Date().toISOString()
   });
 
-  // 整洁度影响能力值（能力封顶10，不低于1）
+  // 整洁度影响能力（线性调整，封顶 10，底线 1）
   m.能力 = Math.min(10, Math.max(1, m.能力 + (cleanScore - 5) * 0.2));
+
+  // 根据整洁度调整次数（可选策略）
+  if (cleanScore >= 8) m.次数 = Math.max(0, m.次数 - 1);
+  if (cleanScore <= 3) m.次数 += 1;
 
   writeJSON(memberPath, members);
   writeJSON(supervisePath, supervise);
 }
 
 module.exports = { generateDuty, applySuperviseUpdate };
-
