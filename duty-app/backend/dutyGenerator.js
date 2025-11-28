@@ -4,7 +4,6 @@ const path = require("path");
 
 const memberPath = path.join(__dirname, "members.json");
 const historyPath = path.join(__dirname, "history.json");
-// ⭐ 新增 supervise 文件路径（保存每日监督）
 const supervisePath = path.join(__dirname, "supervise.json");
 
 // 读取 JSON 文件
@@ -32,26 +31,30 @@ function generateDuty(days, peoplePerDay, startDate) {
     throw new Error("可用人数不足");
   }
 
-  // 计算平均能力
-  const avgAbility = available.reduce((s, m) => s + m.能力, 0) / available.length;
+  // 平均能力
+  const avgAbility =
+    available.reduce((s, m) => s + m.能力, 0) / available.length;
 
   function groupScore(group) {
     const names = group.map(m => m.name);
-    // 如果该组出现过则跳过（完全相同）
-    if (history.some(h => names.every(n => h.includes(n)) && h.length === names.length)) return null;
+
+    // 完全相同组合不能重复
+    if (history.some(h => names.every(n => h.includes(n)) && h.length === names.length)) {
+      return null;
+    }
 
     const avg = group.reduce((s, m) => s + m.能力, 0) / group.length;
     const abilityScore = Math.max(0, 10 - Math.abs(avg - avgAbility) * 2);
     const fairness = group.reduce((s, m) => s + (10 - m.次数), 0);
-    const randomness = Math.random() * 2 - 1; // -1 到 +1 随机扰动
+    const randomness = Math.random() * 2 - 1;
     return abilityScore + fairness + randomness;
   }
 
-  // 按天生成
   const result = [];
+
   for (let d = 0; d < days; d++) {
-    // 所有可能组合
     const combos = [];
+
     for (let i = 0; i < available.length; i++) {
       for (let j = i + 1; j < available.length; j++) {
         const group = [available[i], available[j]];
@@ -60,7 +63,7 @@ function generateDuty(days, peoplePerDay, startDate) {
       }
     }
 
-    // 如果没有可用组合，清空历史后再试一次
+    // 若无可用组合 → 清空历史并重试
     if (combos.length === 0) {
       history = [];
       writeJSON(historyPath, history);
@@ -73,9 +76,7 @@ function generateDuty(days, peoplePerDay, startDate) {
         }
       }
 
-      if (combos.length === 0) {
-        throw new Error("无法生成有效分组");
-      }
+      if (combos.length === 0) throw new Error("无法生成有效分组");
     }
 
     combos.sort((a, b) => b.score - a.score);
@@ -86,6 +87,7 @@ function generateDuty(days, peoplePerDay, startDate) {
 
     const names = chosen.group.map(m => m.name);
     history.push(names);
+
     result.push({
       date: new Date(new Date(startDate).getTime() + d * 86400000)
         .toISOString()
@@ -93,7 +95,7 @@ function generateDuty(days, peoplePerDay, startDate) {
       group: names
     });
 
-    // 更新次数
+    // 次数增加
     members.forEach(m => {
       if (names.includes(m.name)) m.次数 += 1;
     });
@@ -106,7 +108,7 @@ function generateDuty(days, peoplePerDay, startDate) {
 }
 
 // ====================
-// 新增：监督记录处理
+// 监督更新：能力 + 次数 调整
 // ====================
 function applySuperviseUpdate(name, cleanScore) {
   let members = readJSON(memberPath, []);
@@ -115,17 +117,16 @@ function applySuperviseUpdate(name, cleanScore) {
   const m = members.find(x => x.name === name);
   if (!m) return;
 
-  // 保存监督记录
   supervise.push({
     name,
     cleanScore,
     time: new Date().toISOString()
   });
 
-  // 整洁度影响能力（线性调整，封顶 10，底线 1）
-  m.能力 = Math.min(10, Math.max(1, m.能力 + (cleanScore - 5) * 0.2));
+  // 能力调整（整洁度评分 cleanScore ∈ 1~10）
+  m.能力 = Math.min(10, Math.max(1, m.能力 + (cleanScore - 5) * 0.25));
 
-  // 根据整洁度调整次数（可选策略）
+  // 次数调整策略
   if (cleanScore >= 8) m.次数 = Math.max(0, m.次数 - 1);
   if (cleanScore <= 3) m.次数 += 1;
 

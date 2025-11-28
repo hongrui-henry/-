@@ -78,42 +78,39 @@ app.post("/generate-duty", (req, res) => {
   }
 });
 
-// ---------- 新增：提交监督（单日） ----------
+// ---------- 新增：监督记录 ----------
 const superviseFile = path.join(__dirname, "supervise.json");
-// ensure file exists
-if (!fs.existsSync(superviseFile)) fs.writeFileSync(superviseFile, JSON.stringify([], null, 2), "utf-8");
+if (!fs.existsSync(superviseFile)) fs.writeFileSync(superviseFile, "[]", "utf-8");
 
 function readJSON(file, def = []) {
-  try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return def; }
+  try { return JSON.parse(fs.readFileSync(file, "utf-8")); }
+  catch { return def; }
 }
 function writeJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
 }
 
 /*
-Expected body:
 {
-  date: "2025-10-24",
-  group: ["小明","小红"],
-  comment: "整体评论",
+  date: "...",
+  group: [...],
+  comment: "...",
   individuals: [
-    { name: "小明", completed: 1, score: 8, comment: "" },
-    ...
+    { name:"小明",completed:1,score:8,comment:"" }
   ]
 }
 */
+
 app.post("/submit-supervise", (req, res) => {
   try {
     const body = req.body;
-    if (!body || !body.date || !Array.isArray(body.group) || !Array.isArray(body.individuals)) {
+    if (!body.date || !Array.isArray(body.group) || !Array.isArray(body.individuals)) {
       return res.status(400).json({ error: "请求体缺少 date/group/individuals" });
     }
 
-    // read existing supervise records and replace/add this date
     const records = readJSON(superviseFile, []);
-    // remove existing for this date
     const filtered = records.filter(r => r.date !== body.date);
-    // build new record
+
     const newRecord = {
       date: body.date,
       group: body.group,
@@ -126,24 +123,13 @@ app.post("/submit-supervise", (req, res) => {
       })),
       updatedAt: new Date().toISOString()
     };
+
     filtered.push(newRecord);
     writeJSON(superviseFile, filtered);
 
-    // apply supervise update to members (adjust ability / 次数)
     newRecord.individuals.forEach(p => {
-      if (p.score !== null && p.score !== undefined) {
-        try { applySuperviseUpdate(p.name, p.score); } catch (e) { /* ignore individual errors */ }
-      } else {
-        // if no score but completed flag exists, we can still adjust counts a bit
-        try {
-          if (p.completed === 1) {
-            // slight positive effect
-            applySuperviseUpdate(p.name, 6);
-          } else {
-            applySuperviseUpdate(p.name, 4);
-          }
-        } catch (e) {}
-      }
+      try { applySuperviseUpdate(p.name, p.score !== null ? p.score : (p.completed ? 6 : 4)); }
+      catch {}
     });
 
     res.json({ ok: true, record: newRecord });
@@ -152,7 +138,7 @@ app.post("/submit-supervise", (req, res) => {
   }
 });
 
-// ---------- 新增：按日期获取监督记录（只读显示） ----------
+// ---------- 按日期获取监督记录 ----------
 app.get("/get-supervise", (req, res) => {
   try {
     const date = req.query.date;
@@ -161,7 +147,31 @@ app.get("/get-supervise", (req, res) => {
     const records = readJSON(superviseFile, []);
     const found = records.find(r => r.date === date);
     if (!found) return res.json({ found: false });
+
     res.json({ found: true, record: found });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- 新增：更新到下一周 ----------
+app.post("/update-week", (req, res) => {
+  try {
+    const members = readJSON(path.join(__dirname, "members.json"), []);
+    if (!Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({ error: "members.json 数据无效" });
+    }
+
+    const newMembers = members.map(m => ({
+      name: m.name,
+      能力: m.能力,
+      可用: m.可用,
+      次数: m.次数
+    }));
+
+    writeJSON(path.join(__dirname, "members.json"), newMembers);
+
+    res.json({ ok: true, members: newMembers });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

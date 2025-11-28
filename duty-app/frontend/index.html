@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta-name="viewport" content="width=device-width, initial-scale=1" />
   <title>值日通 · 系统</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 
@@ -23,7 +23,7 @@
 
   <div class="layout">
 
-    <!-- Left Panel — 上传 + 生成 + 日期列表 + 预览表格 -->
+    <!-- Left Panel -->
     <div class="left-panel">
 
       <!-- 上传名单 & 参数 -->
@@ -61,6 +61,10 @@
             <button id="downloadBtn" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded">导出名单</button>
           </div>
 
+          <div>
+            <button id="updateWeekBtn" class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded">更新到下一周</button>
+          </div>
+
           <p id="memberInfo" class="text-sm text-gray-500"></p>
         </div>
       </div>
@@ -89,10 +93,10 @@
 
     </div>
 
-    <!-- Right Panel —— 监督编辑 + 监督查看 -->
+    <!-- Right Panel -->
     <div class="right-panel">
 
-      <!-- 监督编辑区（现在所有日期都可编辑） -->
+      <!-- 监督编辑区 -->
       <div class="panel supervise-section" id="todaySupervise" style="display:none;">
         <h2 class="text-xl font-semibold mb-3">监督</h2>
 
@@ -112,7 +116,7 @@
         </div>
       </div>
 
-      <!-- 查看监督记录（只读） -->
+      <!-- 查看监督记录 -->
       <div class="panel supervise-section" id="viewSupervise" style="display:none;">
         <h2 class="text-xl font-semibold mb-3">监督记录</h2>
         <div id="viewDate" class="font-medium mb-2"></div>
@@ -122,9 +126,6 @@
 
     </div>
   </div>
-
-
-  <!-- ↓↓↓ 以下 JS 完全保留你原本逻辑，仅处理显示限制、文字删除、布局变化 ↓↓↓ -->
 
   <script>
     function formatDate(d){return new Date(d).toISOString().split("T")[0];}
@@ -138,6 +139,7 @@
     const memberInfo=document.getElementById("memberInfo");
     const resultTable=document.getElementById("resultTable");
     const downloadBtn=document.getElementById("downloadBtn");
+    const updateWeekBtn=document.getElementById("updateWeekBtn");
 
     const datesList=document.getElementById("datesList");
     const todaySupervise=document.getElementById("todaySupervise");
@@ -168,6 +170,15 @@
     };
 
     downloadBtn.onclick=()=>{location.href="/download-members";};
+
+    updateWeekBtn.onclick=async()=>{
+      try{
+        const res=await fetch("/update-week",{method:"POST"});
+        const j=await res.json();
+        if(!res.ok)throw new Error(j.error);
+        alert("成功更新到下一周 ✓");
+      }catch(e){alert("更新失败："+e.message);}
+    };
 
     generateBtn.onclick=async()=>{
       const days=Number(document.getElementById("days").value);
@@ -212,7 +223,6 @@
     function loadDay(item){
       setupTodayEditable(item.date,item.group);
 
-      // also load read-only record
       fetch(`/get-supervise?date=${item.date}`)
        .then(r=>r.json())
        .then(d=>{
@@ -299,6 +309,7 @@
           const j=await r.json();
           if(!r.ok)throw new Error(j.error);
           submitStatus.innerText="提交成功 ✓";
+          loadDay({date,group});
         }catch(e){
           submitStatus.innerText="提交失败："+e.message;
         }finally{
