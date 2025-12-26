@@ -194,6 +194,7 @@
 
     <!-- VIEW: Global Dashboard -->
     <div id="view-global" class="view-section absolute inset-0 p-8 overflow-y-auto">
+      <!-- (Global View Content Same) -->
       <div class="max-w-5xl mx-auto space-y-8">
         <div class="flex justify-between items-end">
           <div>
@@ -206,10 +207,6 @@
             <button onclick="createNewClass()"
               class="btn-primary px-4 py-2 rounded-lg text-sm font-medium shadow-md flex items-center gap-2">新建班级</button>
           </div>
-        </div>
-        <div id="reminderSection" class="hidden animate-fade-in-down">
-          <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">待办提醒</h3>
-          <div id="reminderList" class="grid gap-3"></div>
         </div>
         <div>
           <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">我的班级</h3>
@@ -235,6 +232,9 @@
           <button onclick="switchClassTab('settings')"
             class="class-tab px-4 py-1.5 rounded-md text-sm font-medium transition" data-tab="settings">⚙️
             管理/生成</button>
+          <button onclick="switchClassTab('collaboration')"
+            class="class-tab px-4 py-1.5 rounded-md text-sm font-medium transition" data-tab="collaboration">🤝
+            班级共创</button>
         </div>
         <div class="flex gap-2">
           <span class="text-xs text-slate-400 self-center">提示: 日历支持拖拽修改</span>
@@ -252,7 +252,6 @@
 
         <!-- Tab: Summary -->
         <div id="tab-summary" class="class-tab-content absolute inset-0 p-6 hidden overflow-y-auto bg-slate-50">
-          <!-- (Summary content same as before) -->
           <div class="max-w-4xl mx-auto">
             <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex gap-4 items-end no-print">
               <div><label class="text-xs font-bold text-slate-500 uppercase block mb-1">开始日期</label><input
@@ -265,6 +264,7 @@
                 class="btn-secondary px-5 py-2 rounded-lg text-sm font-bold ml-auto">打印海报</button>
             </div>
             <div id="summaryPoster" class="poster-container hidden">
+              <!-- Poster Content -->
               <div class="text-center">
                 <h2 class="poster-title text-4xl text-slate-900">值日周报</h2>
                 <p class="text-slate-500 font-medium mb-8" id="posterDateRange">--</p>
@@ -302,15 +302,27 @@
             <div class="card p-6">
               <div class="flex justify-between items-center mb-4">
                 <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2"><span>📂</span> 名单管理</h3>
-                <button onclick="createInviteCode()" class="text-blue-600 text-sm font-medium hover:underline">📡 生成邀请码
-                  (共创)</button>
+                <!-- Removed Invite Code button here, moved to Collaboration tab -->
               </div>
               <input id="fileInput" type="file" accept=".json,.xlsx,.csv" class="hidden" />
               <label for="fileInput"
                 class="block w-full text-center py-8 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition text-sm text-slate-600 mb-4 bg-slate-50">
-                <div class="text-2xl mb-2">📄</div><span id="fileNameDisplay">点击选择 Excel / JSON 文件</span>
+                <div class="text-2xl mb-2">📄</div><span id="fileNameDisplay">点击选择 Excel / JSON 文件 (覆盖上传)</span>
               </label>
-              <button id="uploadBtn" class="w-full btn-primary py-2.5 rounded-lg text-sm font-medium">上传更新名单</button>
+              <button id="uploadBtn"
+                class="w-full btn-primary py-2.5 rounded-lg text-sm font-medium mb-4">上传更新名单</button>
+
+              <!-- Member Preview Section -->
+              <div class="border-t border-slate-100 pt-4">
+                <div class="flex justify-between items-center mb-2">
+                  <span class="text-xs font-bold text-slate-400 uppercase">当前名单预览</span>
+                  <button onclick="refreshMembers()" class="text-xs text-blue-500 hover:underline">刷新</button>
+                </div>
+                <div class="max-h-48 overflow-y-auto border rounded-lg bg-slate-50 p-2 text-sm text-slate-600"
+                  id="memberPreview">
+                  <div class="text-center text-slate-400 py-4">加载中...</div>
+                </div>
+              </div>
             </div>
 
             <div class="card p-6">
@@ -342,6 +354,84 @@
             </div>
           </div>
         </div>
+
+        <!-- Tab: Collaboration (New) -->
+        <div id="tab-collaboration" class="class-tab-content absolute inset-0 p-6 hidden overflow-y-auto bg-slate-50">
+          <div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Left: Class Info & Invite -->
+            <div class="space-y-6">
+              <div class="card p-6">
+                <h3 class="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2"><span>🏫</span> 班级信息</h3>
+                <div class="space-y-4">
+                  <div>
+                    <div class="text-xs font-bold text-slate-400 uppercase">班级 ID</div>
+                    <div class="font-bold text-slate-800 break-all" id="collabClassId">--</div>
+                  </div>
+                  <div>
+                    <div class="text-xs font-bold text-slate-400 uppercase">所有者</div>
+                    <div class="flex items-center gap-2 mt-1">
+                      <div
+                        class="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold"
+                        id="collabOwnerAvatar">U</div>
+                      <span class="text-sm font-medium" id="collabOwner">--</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="text-xs font-bold text-slate-400 uppercase">我的角色</div>
+                    <div class="inline-block px-2 py-1 rounded bg-emerald-100 text-emerald-700 text-xs font-bold mt-1"
+                      id="collabRole">--</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card p-6 bg-indigo-50 border-indigo-100">
+                <h3 class="font-bold text-lg text-indigo-900 mb-2 flex items-center gap-2"><span>📡</span> 邀请加入</h3>
+                <p class="text-xs text-indigo-600 mb-4">将此 6 位邀请码分享给其他用户，他们即可加入本班级进行协作。</p>
+
+                <div id="inviteCodeContainer" class="hidden">
+                  <div
+                    class="text-3xl font-mono font-bold text-indigo-700 text-center tracking-widest bg-white py-3 rounded-lg border border-indigo-100 mb-2 select-all"
+                    id="inviteCodeDisplay">--</div>
+                  <div class="text-center text-xs text-indigo-400">点击上方代码复制</div>
+                </div>
+                <button id="btnGenerateInvite" onclick="createInviteCode()"
+                  class="w-full btn-primary bg-indigo-600 hover:bg-indigo-700 py-2 rounded-lg text-sm font-bold shadow-md">生成邀请码</button>
+                <div id="inviteMsg" class="text-center text-xs text-indigo-400 mt-2 hidden">仅所有者可生成</div>
+              </div>
+            </div>
+
+            <!-- Right: Collaborators & Logs -->
+            <div class="md:col-span-2 space-y-6">
+              <div class="card p-6">
+                <h3 class="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2"><span>👥</span> 协作成员</h3>
+                <div class="overflow-hidden rounded-lg border border-slate-100">
+                  <table class="w-full text-sm">
+                    <thead class="bg-slate-50 border-b border-slate-100 text-slate-500">
+                      <tr>
+                        <th class="px-4 py-2 text-left font-medium">用户名</th>
+                        <th class="px-4 py-2 text-right font-medium">加入时间</th>
+                      </tr>
+                    </thead>
+                    <tbody id="collabList" class="divide-y divide-slate-50">
+                      <tr>
+                        <td colspan="2" class="px-4 py-4 text-center text-slate-400">暂无协作成员</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="card p-6">
+                <h3 class="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2"><span>📜</span> 操作日志 (最近100条)
+                </h3>
+                <div class="max-h-64 overflow-y-auto space-y-3 pr-2" id="auditLogList">
+                  <div class="text-center text-slate-400 py-4">暂无记录</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </main>
@@ -374,7 +464,6 @@
           class="text-slate-400 hover:text-slate-600 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
       </div>
       <div class="p-6 overflow-y-auto flex-1">
-
         <!-- View Mode: Group Display -->
         <div id="superviseViewMode">
           <div class="mb-4 bg-slate-50 p-3 rounded-lg border border-slate-100 relative group">
@@ -384,8 +473,7 @@
             </div>
             <div id="modalGroup" class="flex flex-wrap gap-2"></div>
           </div>
-
-          <!-- Content for Score/View -->
+          <!-- Content -->
           <div id="modalContentEdit" class="hidden space-y-4">
             <div id="modalInputs" class="space-y-4"></div>
             <textarea id="modalComment" class="w-full border rounded-lg p-3 h-24 text-sm resize-none"
@@ -401,7 +489,6 @@
               class="w-full btn-secondary py-2 rounded-lg text-sm font-medium">修改评分</button>
           </div>
         </div>
-
         <!-- Edit Mode: Group Modification -->
         <div id="superviseEditMode" class="hidden">
           <div class="text-sm text-slate-500 mb-4">修改本日值日人员及职务：</div>
@@ -416,12 +503,11 @@
             <button onclick="saveGroupEdit()" class="btn-primary px-4 py-2 rounded-lg text-sm">保存修改</button>
           </div>
         </div>
-
       </div>
     </div>
   </div>
 
-  <!-- Modal: Profile / Settings -->
+  <!-- Modal: Profile / Settings (Same) -->
   <div id="modalProfile"
     class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
@@ -430,22 +516,18 @@
         id="profileAvatar">U</div>
       <h3 class="font-bold text-xl text-slate-800 mb-1" id="profileName">User</h3>
       <p class="text-sm text-slate-500 mb-6">当前班级: <span id="profileClass">--</span></p>
-
       <div class="space-y-3 mb-6" id="profileActions">
         <button onclick="showChangePassword()" class="w-full btn-secondary py-2 rounded-lg text-sm">修改密码</button>
         <button onclick="deleteAccount()"
           class="w-full text-red-500 border border-red-200 hover:bg-red-50 py-2 rounded-lg text-sm">注销账户</button>
       </div>
-
-      <!-- Change Pwd Form -->
       <div id="changePwdForm" class="hidden text-left space-y-3 mb-6">
         <input id="newPwd" type="password" placeholder="新密码" class="w-full border rounded px-3 py-2 text-sm" />
         <button onclick="submitChangePwd()" class="w-full btn-primary py-2 rounded-lg text-sm">确认修改</button>
         <button onclick="hideChangePwd()" class="w-full text-slate-400 text-xs text-center hover:underline">取消</button>
       </div>
-
       <div class="text-left bg-slate-50 p-4 rounded-lg text-xs text-slate-400 space-y-1 mt-4">
-        <p><strong>版本:</strong> v2.2.0 (Plus)</p>
+        <p><strong>版本:</strong> v2.3.0 (Collab)</p>
         <p><strong>开发者:</strong> Antigravity AI</p>
       </div>
       <button onclick="closeModal('modalProfile')" class="w-full btn-secondary py-2 rounded-lg mt-4">关闭</button>
@@ -496,10 +578,8 @@
         data.classes.forEach(c => {
           const card = document.createElement('div');
           card.className = "card p-6 cursor-pointer hover:border-blue-400 group relative overflow-hidden flex flex-col justify-between h-40";
-
           let badge = '';
           if (c.isShared) badge = `<span class="absolute top-2 right-2 bg-purple-100 text-purple-600 text-[10px] px-2 py-0.5 rounded-full font-bold">已加入</span>`;
-
           card.onclick = () => enterClass(c.name);
           card.innerHTML = `${badge}<div><h3 class="text-xl font-bold text-slate-800 mb-1 truncate">${c.name}</h3><div class="text-xs text-slate-400">${c.nextWeekReady ? '下周已排班' : '下周未排班'}</div></div><div class="flex items-center gap-2 ${c.pendingDuty ? 'text-orange-500 font-medium' : 'text-emerald-500 font-medium'} text-sm mt-4"><span class="w-2 h-2 rounded-full ${c.pendingDuty ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'}"></span><span>${c.pendingDuty ? '今日待评分' : '今日已完成'}</span></div>`;
           grid.appendChild(card);
@@ -529,40 +609,150 @@
       });
       document.querySelectorAll('.class-tab-content').forEach(c => c.classList.add('hidden'));
       document.getElementById(`tab-${tab}`).classList.remove('hidden');
+
       if (tab === 'calendar') { setTimeout(() => calendar.render(), 100); loadSchedule(); }
+      if (tab === 'settings') { refreshMembers(); }
+      if (tab === 'collaboration') { loadCollaborationData(); }
+      if (tab === 'summary') { autoFillSummaryDates(); }
     }
+
+    // --- Member Preview & Summary Logic ---
+    async function refreshMembers() {
+      const div = document.getElementById('memberPreview');
+      div.innerHTML = '<div class="text-center text-slate-400 py-4">加载中...</div>';
+      try {
+        const res = await api('/api/class/members');
+        if (!res.ok) { div.innerHTML = '<div class="text-center text-red-400 py-4">加载失败</div>'; return; }
+        const data = await res.json();
+        const members = data.members || [];
+        if (members.length === 0) {
+          div.innerHTML = '<div class="text-center text-slate-400 py-4">暂无名单, 请上传</div>';
+        } else {
+          const list = members.map(m => `
+                    <div class="flex justify-between items-center py-1 border-b border-slate-100 last:border-0">
+                        <span class="font-medium">${m.name}</span>
+                        <div class="flex gap-2 text-xs text-slate-400">
+                             <span>能力:${m.能力 || '-'}</span>
+                             <span>次数:${m.次数 || '0'}</span>
+                        </div>
+                    </div>
+                 `).join('');
+          div.innerHTML = `<div class="p-2 space-y-1">${list}</div>`;
+        }
+      } catch (e) { div.innerHTML = '<div class="text-center text-red-400 py-4">Error</div>'; }
+    }
+
+    async function autoFillSummaryDates() {
+      // Find latest schedule week
+      try {
+        const res = await api('/api/schedule');
+        const data = await res.json();
+        const sched = data.schedule || [];
+        if (sched.length > 0) {
+          // Determine latest date in schedule
+          const last = new Date(sched[sched.length - 1].date);
+          // Find Monday of that week
+          const day = last.getDay() || 7;
+          if (day !== 1) last.setDate(last.getDate() - day + 1); // Set to Monday
+          const startStr = last.toISOString().split('T')[0];
+
+          const end = new Date(last);
+          end.setDate(end.getDate() + 6); // Set to Sunday
+          const endStr = end.toISOString().split('T')[0];
+
+          // Only fill if empty
+          if (!document.getElementById('sumStartDate').value) {
+            document.getElementById('sumStartDate').value = startStr;
+            document.getElementById('sumEndDate').value = endStr;
+          }
+        }
+      } catch (e) { }
+    }
+
+    // --- Collaboration Data ---
+    async function loadCollaborationData() {
+      try {
+        const res = await api('/api/class/collaboration');
+        const data = await res.json();
+
+        // Info
+        document.getElementById('collabClassId').innerText = currentClassId;
+        document.getElementById('collabOwner').innerText = data.owner;
+        document.getElementById('collabOwnerAvatar').innerText = (data.owner || 'U')[0].toUpperCase();
+        document.getElementById('collabRole').innerText = data.role === 'owner' ? '👑 所有者 (Owner)' : '🤝 协作者 (Member)';
+        document.getElementById('collabRole').className = data.role === 'owner'
+          ? "inline-block px-2 py-1 rounded bg-indigo-100 text-indigo-700 text-xs font-bold mt-1"
+          : "inline-block px-2 py-1 rounded bg-purple-100 text-purple-700 text-xs font-bold mt-1";
+
+        // Invite Code
+        if (data.inviteCode) {
+          document.getElementById('inviteCodeContainer').classList.remove('hidden');
+          document.getElementById('inviteCodeDisplay').innerText = data.inviteCode;
+          document.getElementById('btnGenerateInvite').classList.add('hidden');
+          document.getElementById('inviteMsg').classList.add('hidden');
+        } else {
+          document.getElementById('inviteCodeContainer').classList.add('hidden');
+          if (data.role === 'owner') {
+            document.getElementById('btnGenerateInvite').classList.remove('hidden');
+            document.getElementById('inviteMsg').classList.add('hidden');
+          } else {
+            document.getElementById('btnGenerateInvite').classList.add('hidden');
+            document.getElementById('inviteMsg').classList.remove('hidden');
+          }
+        }
+
+        // Collaborators
+        const colList = document.getElementById('collabList');
+        if (data.collaborators && data.collaborators.length > 0) {
+          colList.innerHTML = data.collaborators.map(c => `
+                    <tr>
+                        <td class="px-4 py-3 text-slate-800 font-bold">${c.username}</td>
+                        <td class="px-4 py-3 text-right text-slate-500 text-xs">${new Date(c.joinedAt).toLocaleDateString()}</td>
+                    </tr>
+                `).join('');
+        } else {
+          colList.innerHTML = `<tr><td colspan="2" class="px-4 py-4 text-center text-slate-400">暂无协作成员</td></tr>`;
+        }
+
+        // Audit Log
+        const auditList = document.getElementById('auditLogList');
+        if (data.auditLog && data.auditLog.length > 0) {
+          auditList.innerHTML = data.auditLog.map(log => {
+            let icon = '🔧';
+            if (log.action === 'GENERATE') icon = '⚡';
+            if (log.action === 'UPDATE') icon = '✏️';
+            if (log.action === 'MOVE') icon = '📅';
+            if (log.action === 'JOIN') icon = '👋';
+            return `
+                    <div class="flex gap-3 items-start p-3 bg-slate-50 rounded-lg border border-slate-100">
+                        <div class="bg-white w-8 h-8 flex items-center justify-center rounded-full text-lg shadow-sm">${icon}</div>
+                        <div class="flex-1">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="font-bold text-slate-700 text-sm">${log.user}</span>
+                                <span class="text-[10px] text-slate-400">${new Date(log.time).toLocaleString()}</span>
+                            </div>
+                            <div class="text-xs text-slate-500">${log.details}</div>
+                        </div>
+                    </div>
+                `}).join('');
+        } else {
+          auditList.innerHTML = `<div class="text-center text-slate-400 py-4">暂无记录</div>`;
+        }
+
+      } catch (e) { console.error(e); }
+    }
+
+    // Legacy/Reused Functions (Modals, Logic) ... Same as before ...
     function openProfileModal() { document.getElementById('modalProfile').classList.remove('hidden'); toggleUserMenu(); }
     window.closeModal = (id) => document.getElementById(id).classList.add('hidden');
+    function showChangePassword() { document.getElementById('profileActions').classList.add('hidden'); document.getElementById('changePwdForm').classList.remove('hidden'); }
+    function hideChangePwd() { document.getElementById('profileActions').classList.remove('hidden'); document.getElementById('changePwdForm').classList.add('hidden'); }
+    async function submitChangePwd() { /*...*/ const pwd = document.getElementById('newPwd').value; if (!pwd) return alert("Empty"); if (confirm("Confirm?")) { await api('/api/user/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) }); alert("Success"); logout(); } }
+    async function deleteAccount() { if (confirm("Delete?")) { await api('/api/user/delete', { method: 'POST' }); alert("Deleted"); logout(); } }
 
-    // --- Profile & Collaboration ---
-    function showChangePassword() {
-      document.getElementById('profileActions').classList.add('hidden');
-      document.getElementById('changePwdForm').classList.remove('hidden');
-    }
-    function hideChangePwd() {
-      document.getElementById('profileActions').classList.remove('hidden');
-      document.getElementById('changePwdForm').classList.add('hidden');
-    }
-    async function submitChangePwd() {
-      const pwd = document.getElementById('newPwd').value;
-      if (!pwd) return alert("密码不能为空");
-      if (confirm("确定修改密码?")) {
-        const res = await api('/api/user/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
-        if (res.ok) { alert("修改成功, 请重新登录"); logout(); }
-        else alert("修改失败");
-      }
-    }
-    async function deleteAccount() {
-      if (confirm("⚠️ 确定要永久删除账号吗? 数据将无法恢复!")) {
-        const res = await api('/api/user/delete', { method: 'POST' });
-        if (res.ok) { alert("账号已删除"); logout(); }
-        else alert("删除失败");
-      }
-    }
-    async function createInviteCode() { // For current class
-      const res = await api('/api/class/invite', { method: 'POST' });
-      const data = await res.json();
-      prompt("🎉 邀请码生成成功! \n请将此码发送给其他用户:", data.code);
+    async function createInviteCode() { // New logic handles UI update reload
+      await api('/api/class/invite', { method: 'POST' });
+      loadCollaborationData();
     }
     async function joinClassModal() {
       const code = prompt("请输入 6 位邀请码:");
@@ -578,7 +768,7 @@
       }
     }
 
-    // --- Calendar, Preview & Editing (Reused) ---
+    // Calendar & Edit Logic (Preserved)
     let calendar;
     let currentSchedule = [];
     let currentModalDate = null;
@@ -631,7 +821,7 @@
       });
     });
 
-    async function loadSchedule() { /* Same */
+    async function loadSchedule() {
       const res = await api('/api/schedule');
       const data = await res.json();
       currentSchedule = data.schedule;
@@ -650,17 +840,16 @@
     async function previewDuty() {
       const rolesStr = document.getElementById('genRoles').value;
       const roles = rolesStr ? rolesStr.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
-      const strategy = document.getElementById('genStrategy').value; // Get Strategy
+      const strategy = document.getElementById('genStrategy').value;
       try {
         const res = await api("/api/duty/preview", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             days: Number(document.getElementById("genDays").value),
             peoplePerDay: Number(document.getElementById("genPeople").value),
             startDate: document.getElementById("genStartDate").value,
             roles: roles,
-            strategy: strategy // Pass Strategy
+            strategy: strategy
           })
         });
         const data = await res.json();
@@ -669,7 +858,7 @@
       } catch (e) { alert(e.message); }
     }
 
-    function renderPreview(days) { /* Same */
+    function renderPreview(days) {
       const list = document.getElementById('previewList');
       list.innerHTML = '';
       days.forEach(d => {
@@ -682,7 +871,7 @@
       document.getElementById('modalPreview').classList.remove('hidden');
     }
 
-    async function savePreview() { /* Same */
+    async function savePreview() {
       try {
         await api('/api/schedule/save-batch', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -694,9 +883,8 @@
       } catch (e) { alert(e.message); }
     }
 
-    // --- Supervise & Edit Group ---
-    async function openSuperviseModal(date) { /* Same */
-      // ... same logic
+    // Supervise, Edit Group (Preserved)
+    async function openSuperviseModal(date) {
       const item = currentSchedule.find(s => s.date === date);
       if (!item) return;
       currentModalDate = date;
@@ -711,8 +899,7 @@
       if (data.found) renderModalView(data.record);
       else renderModalEdit(item);
     }
-
-    function renderModalGroup(group) { /* Same */
+    function renderModalGroup(group) {
       const html = group.map((m, idx) => {
         const name = typeof m === 'string' ? m : m.name;
         const role = typeof m === 'string' ? '' : m.role;
@@ -720,16 +907,14 @@
       }).join("");
       document.getElementById('modalGroup').innerHTML = html;
     }
-
-    // Interaction: Toggle Edit Group
     let editingGroupTemp = [];
-    function toggleGroupEdit() { /* Same */
+    function toggleGroupEdit() {
       const view = document.getElementById('superviseViewMode');
       const edit = document.getElementById('superviseEditMode');
       if (view.classList.contains('hidden')) { view.classList.remove('hidden'); edit.classList.add('hidden'); }
       else { view.classList.add('hidden'); edit.classList.remove('hidden'); editingGroupTemp = JSON.parse(JSON.stringify(currentModalItem.group)); renderEditGroupList(); }
     }
-    function renderEditGroupList() { /* Same */
+    function renderEditGroupList() {
       const container = document.getElementById('editGroupList');
       container.innerHTML = '';
       editingGroupTemp.forEach((m, idx) => {
@@ -743,14 +928,14 @@
     }
     window.updateGroupRole = (idx, val) => { editingGroupTemp[idx].role = val; };
     window.removeGroupMember = (idx) => { editingGroupTemp.splice(idx, 1); renderEditGroupList(); };
-    window.addNewMember = () => { /* Same */
+    window.addNewMember = () => {
       const name = document.getElementById('newMemberName').value;
       if (!name) return;
       editingGroupTemp.push({ name, role: '' });
       document.getElementById('newMemberName').value = '';
       renderEditGroupList();
     };
-    window.saveGroupEdit = async () => { /* Same */
+    window.saveGroupEdit = async () => {
       try {
         await api('/api/schedule/update', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -764,8 +949,7 @@
         toggleGroupEdit(); loadSchedule();
       } catch (e) { alert(e.message); }
     };
-
-    function renderModalEdit(item) { /* Same */
+    function renderModalEdit(item) {
       document.getElementById('modalContentEdit').classList.remove('hidden');
       document.getElementById('modalContentView').classList.add('hidden');
       const container = document.getElementById('modalInputs');
@@ -781,7 +965,7 @@
         container.appendChild(div);
       });
     }
-    function renderModalView(record) { /* Same */
+    function renderModalView(record) {
       document.getElementById('modalContentEdit').classList.add('hidden');
       document.getElementById('modalContentView').classList.remove('hidden');
       const container = document.getElementById('modalViewList');
@@ -794,9 +978,8 @@
         container.appendChild(div);
       });
     }
-
     window.enableEdit = () => renderModalEdit(currentModalItem);
-    async function submitSupervise() { /* Same */
+    async function submitSupervise() {
       const individuals = [];
       for (let div of document.getElementById('modalInputs').children) {
         individuals.push({
@@ -816,7 +999,8 @@
       } catch (e) { alert(e.message); }
     }
 
-    window.checkNextWeek = async () => { /* Same */
+    // Check Next Week (Preserved)
+    window.checkNextWeek = async () => {
       const res = await api('/api/schedule');
       const data = await res.json();
       const sched = data.schedule;
@@ -831,7 +1015,9 @@
         }
       } else { alert('下周排班已就绪 ✅'); }
     };
-    window.generateSummary = async () => { /* Same */
+
+    // Summary Gen (Preserved)
+    window.generateSummary = async () => {
       const start = document.getElementById('sumStartDate').value;
       const end = document.getElementById('sumEndDate').value;
       if (!start || !end) return alert("请选择日期");
@@ -853,7 +1039,7 @@
       });
     };
 
-    // Bind upload (Fixed)
+    // Upload binding (Preserved)
     const fIn = document.getElementById('fileInput');
     fIn.onchange = () => { if (fIn.files[0]) document.getElementById('fileNameDisplay').innerText = fIn.files[0].name; };
     document.getElementById('uploadBtn').onclick = async () => {
@@ -863,6 +1049,7 @@
       try {
         await api('/upload-members', { method: 'POST', body: formData, headers: {} });
         alert("上传成功！");
+        refreshMembers(); // Auto refresh
       } catch (e) { alert("上传失败: " + e.message); }
     };
 

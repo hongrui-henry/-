@@ -91,8 +91,33 @@ function getUserFilePaths(username, classId) {
     memberPath: path.join(dir, "members.json"),
     historyPath: path.join(dir, "history.json"),
     supervisePath: path.join(dir, "supervise.json"),
-    schedulePath: path.join(dir, "schedule.json")
+    schedulePath: path.join(dir, "schedule.json"),
+    collaboratorsPath: path.join(dir, "collaborators.json"),
+    auditPath: path.join(dir, "audit.json")
   };
+}
+
+// 辅助：记录审计日志
+function logAction(username, classId, action, details = "") {
+  try {
+    const { auditPath } = getUserFilePaths(username, classId);
+    let logs = [];
+    try { logs = JSON.parse(fs.readFileSync(auditPath, "utf-8")); } catch { }
+
+    logs.unshift({
+      user: username,
+      action,
+      details,
+      time: new Date().toISOString()
+    });
+
+    // Keep last 100 logs
+    if (logs.length > 100) logs = logs.slice(0, 100);
+
+    fs.writeFileSync(auditPath, JSON.stringify(logs, null, 2), "utf-8");
+  } catch (e) {
+    console.error("Audit Log Error:", e);
+  }
 }
 
 // ===== 认证接口 =====
@@ -232,7 +257,7 @@ app.post("/upload-members", authMiddleware, upload.single("file"), (req, res) =>
 // 导出当前名单
 app.get("/download-members", (req, res) => {
   const token = req.query.token;
-  const classId = req.query.classId || "default"; // 支持通过 query 传 classId
+  const classId = req.query.classId || "default";
   const username = sessions[token];
 
   if (!username) return res.status(401).send("未登录");
@@ -242,6 +267,18 @@ app.get("/download-members", (req, res) => {
     return res.status(404).send("尚未上传名单");
   }
   res.download(memberPath, "members.json");
+});
+
+// 获取成员列表 (Preview)
+app.get("/api/class/members", authMiddleware, (req, res) => {
+  try {
+    const { memberPath } = getUserFilePaths(req.user.username, req.classId);
+    let members = [];
+    try { members = JSON.parse(fs.readFileSync(memberPath, "utf-8")); } catch { }
+    res.json({ members });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 生成值日计划
@@ -489,6 +526,8 @@ app.post("/api/schedule/save-batch", authMiddleware, (req, res) => {
     fs.writeFileSync(paths.memberPath, JSON.stringify(members, null, 2), "utf-8");
     fs.writeFileSync(paths.historyPath, JSON.stringify(history, null, 2), "utf-8");
 
+    logAction(req.user.username, req.classId, "GENERATE", `Generated/Saved ${newSchedule.length} days of duty.`);
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -522,6 +561,8 @@ app.post("/api/schedule/update", authMiddleware, (req, res) => {
 
     schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
     fs.writeFileSync(paths.schedulePath, JSON.stringify(schedule, null, 2), "utf-8");
+
+    logAction(req.user.username, req.classId, "UPDATE", `Updated duty for ${date}.`);
 
     res.json({ ok: true });
   } catch (err) {
@@ -563,6 +604,8 @@ app.post("/api/schedule/move", authMiddleware, (req, res) => {
 
     schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
     fs.writeFileSync(paths.schedulePath, JSON.stringify(schedule, null, 2), "utf-8");
+
+    logAction(req.user.username, req.classId, "MOVE", `Moved duty from ${fromDate} to ${toDate}.`);
 
     res.json({ ok: true });
   } catch (err) {
@@ -727,7 +770,116 @@ app.post("/api/class/join", authMiddleware, (req, res) => {
     });
     fs.writeFileSync(sharedFile, JSON.stringify(shared, null, 2));
 
+    // Update Collaborators List in OWNER'S directory
+    try {
+      const { collaboratorsPath } = getUserFilePaths(invite.owner, invite.classId);
+      let collaborators = [];
+      try { collaborators = JSON.parse(fs.readFileSync(collaboratorsPath, "utf-8")); } catch { }
+
+      if (!collaborators.find(c => c.username === req.user.username)) {
+        collaborators.push({
+          username: req.user.username,
+          joinedAt: new Date().toISOString()
+        });
+        fs.writeFileSync(collaboratorsPath, JSON.stringify(collaborators, null, 2), "utf-8");
+      }
+
+      // Log Audit
+      logAction(invite.owner, invite.classId, "JOIN", `User ${req.user.username} joined the class.`);
+    } catch (e) { console.error("Track collaborator failed", e); }
+
     res.json({ ok: true, className: `[Shared] ${invite.classId} (@${invite.owner})` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取协作信息 (Collaborators, Logs, InviteCode)
+app.get("/api/class/collaboration", authMiddleware, (req, res) => {
+  try {
+    const { collaboratorsPath, auditPath } = getUserFilePaths(req.user.username, req.classId);
+
+    // 1. Collaborators
+    let collaborators = [];
+    try { collaborators = JSON.parse(fs.readFileSync(collaboratorsPath, "utf-8")); } catch { }
+
+    // 2. Audit Logs
+    let auditLog = [];
+    try { auditLog = JSON.parse(fs.readFileSync(auditPath, "utf-8")); } catch { }
+
+    // 3. Invite Code (Find code for this class if exists)
+    // This is slow if invites.json is huge, but fine for now.
+    const invites = loadInvites();
+    // In shared class scenario, req.classId is the NAME implies we need to resolve owner.
+    // But getUserFilePaths resolves owner internally.
+    // However, invites store { owner, classId } based on ORIGINAL creation.
+    // If I am VIEWING a shared class, I might not be able to generate invite code unless I am owner?
+    // Requirement says: "In class page show invite code".
+    // If shared, maybe show "Joined via xxx"? Or just hide?
+    // Let's Find any code that points to this class.
+
+    // We need to know who is the REAL owner to find the invite code.
+    // getUserFilePaths logic:
+    // If I am owner, owner=me, classId=name.
+    // If shared, owner=other, classId=originalName.
+
+    // Let's just return what we find for THIS user's context?
+    // Actually, `getUserFilePaths` doesn't tell us the owner directly.
+    // We can infer it from `getClassDir`.
+
+    const dir = getClassDir(req.user.username, req.classId);
+    // Warning: getClassDir implementation relies on `shared_classes.json` of REQUESTER.
+    // If I am owner, dir is my dir.
+    // If I am viewer, dir is owner's dir.
+
+    // We can try to match `dir` with `invites`.
+    // But invites store `owner` + `classId`.
+    // Let's iterating invites and checking if they match current class context is hard without passing owner info explicitly.
+
+    // Simplification:
+    // Return invite code ONLY if I am the owner.
+    // How do I know if I am the owner?
+    // `getUserFilePaths` -> if shared, it redirects.
+    // Let's look at `shared_classes.json` again?
+
+    let inviteCode = null;
+    const userRoot = getUserRootDir(req.user.username);
+    const sharedFile = path.join(userRoot, "shared_classes.json");
+    let isShared = false;
+    let realOwner = req.user.username;
+    let realClassId = req.classId;
+
+    if (fs.existsSync(sharedFile)) {
+      try {
+        const shared = JSON.parse(fs.readFileSync(sharedFile, "utf-8"));
+        const link = shared.find(s => s.name === req.classId);
+        if (link) {
+          isShared = true;
+          realOwner = link.owner;
+          realClassId = link.originalClassId;
+        }
+      } catch { }
+    }
+
+    if (!isShared) {
+      // I am owner, find my code
+      for (const [code, info] of Object.entries(invites)) {
+        if (info.owner === req.user.username && info.classId === req.classId) {
+          inviteCode = code;
+          break;
+        }
+      }
+    }
+
+    res.json({
+      isShared,
+      owner: realOwner,
+      role: isShared ? "collaborator" : "owner",
+      inviteCode,
+      collaborators,
+      auditLog
+    });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
