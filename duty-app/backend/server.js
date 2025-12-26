@@ -5,6 +5,7 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const XLSX = require("xlsx");
+const crypto = require("crypto");
 
 const { generateDuty, applySuperviseUpdate } = require("./dutyGenerator");
 
@@ -15,15 +16,185 @@ app.use(express.json());
 // ===== 静态文件托管 =====
 const frontendPath = path.join(__dirname, "../frontend");
 app.use(express.static(frontendPath));
+
+// 根目录重定向到 dashboard (前端会判断登录状态)
 app.get("/", (req, res) => {
   res.sendFile(path.join(frontendPath, "index.html"));
 });
 
+// ===== 数据存储配置 =====
+const DATA_ROOT = path.join(__dirname, "../data");
+const USERS_FILE = path.join(DATA_ROOT, "users.json");
+
+if (!fs.existsSync(DATA_ROOT)) fs.mkdirSync(DATA_ROOT, { recursive: true });
+if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, "[]", "utf-8");
+
+// 简单的内存 Session 存储 (Token -> Username)
+const sessions = {};
+
+// 辅助：读写用户数据
+function readUsers() {
+  try { return JSON.parse(fs.readFileSync(USERS_FILE, "utf-8")); }
+  catch { return []; }
+}
+function writeUsers(users) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf-8");
+}
+
+// 辅助：获取用户根目录
+function getUserRootDir(username) {
+  const dir = path.join(DATA_ROOT, username);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Helper: Get User's Class Directory (Handles Shared Classes)
+function getClassDir(username, classId) {
+  // Check if it's a shared class mapping
+  // A shared class name generally looks like "[Shared] className (@owner)" or we can strictly use the mapped ID if we passed it.
+  // BUT frontend passes "currentClassId" which is the NAME.
+  // To resolve correctly, we need to check shared_classes.json for THIS user.
+
+  const userRoot = getUserRootDir(username);
+  const sharedFile = path.join(userRoot, "shared_classes.json");
+  if (fs.existsSync(sharedFile)) {
+    try {
+      const shared = JSON.parse(fs.readFileSync(sharedFile, "utf-8"));
+      const link = shared.find(s => s.name === classId);
+      if (link) {
+        // It is a shared class! Redirect to OWNER's data.
+        const ownerRoot = getUserRootDir(link.owner);
+
+        // We must assume the owner's class dir logic is same:
+        // Safe name logic:
+        const safeOwnerClassId = link.originalClassId.replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, "");
+        const targetDir = path.join(ownerRoot, safeOwnerClassId);
+        if (!fs.existsSync(targetDir)) throw new Error("Shared class not found (Owner may have deleted it)");
+        return targetDir;
+      }
+    } catch (e) { console.error("Shared resolution error", e); }
+  }
+
+  // Fallback to local class
+  const safeClassId = (classId || "default").replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, "");
+  const classDir = path.join(userRoot, safeClassId);
+  if (!fs.existsSync(classDir)) {
+    fs.mkdirSync(classDir, { recursive: true });
+  }
+  return classDir;
+}
+
+// 辅助：获取文件路径 (支持多班级)
+function getUserFilePaths(username, classId) {
+  const dir = getClassDir(username, classId);
+  return {
+    memberPath: path.join(dir, "members.json"),
+    historyPath: path.join(dir, "history.json"),
+    supervisePath: path.join(dir, "supervise.json"),
+    schedulePath: path.join(dir, "schedule.json")
+  };
+}
+
+// ===== 认证接口 =====
+
+app.post("/api/register", (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: "请输入用户名和密码" });
+
+  const users = readUsers();
+  if (users.find(u => u.username === username)) {
+    return res.status(400).json({ error: "用户名已存在" });
+  }
+
+  // 简单存储（生产环境应加盐哈希）
+  users.push({ username, password });
+  writeUsers(users);
+
+  // 初始化用户目录
+  getUserRootDir(username);
+
+  res.json({ ok: true });
+});
+
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body;
+  const users = readUsers();
+  const user = users.find(u => u.username === username && u.password === password);
+
+  if (!user) return res.status(401).json({ error: "用户名或密码错误" });
+
+  // 生成简单 Token
+  const token = crypto.randomBytes(16).toString("hex");
+  sessions[token] = username;
+
+  res.json({ ok: true, token, username });
+});
+
+app.post("/api/logout", (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (token) delete sessions[token];
+  res.json({ ok: true });
+});
+
+// ===== 中间件：验证 Token =====
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ error: "未登录" });
+
+  const token = authHeader.split(" ")[1];
+  const username = sessions[token];
+
+  if (!username) return res.status(401).json({ error: "登录已失效" });
+
+  req.user = { username };
+  // 从 Header 获取当前班级 ID
+  req.classId = decodeURIComponent(req.headers["x-class-id"] || "default");
+  next();
+}
+
+// ===== 班级管理接口 =====
+
+// 获取班级列表
+app.get("/api/class/list", authMiddleware, (req, res) => {
+  try {
+    const userDir = getUserRootDir(req.user.username);
+    const items = fs.readdirSync(userDir, { withFileTypes: true });
+    const classes = items
+      .filter(item => item.isDirectory())
+      .map(item => item.name);
+
+    // 如果没有班级，默认创建一个 default
+    if (classes.length === 0) {
+      getClassDir(req.user.username, "default");
+      classes.push("default");
+    }
+
+    res.json({ classes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 创建新班级
+app.post("/api/class/create", authMiddleware, (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: "请输入班级名称" });
+
+    const classDir = getClassDir(req.user.username, name);
+    res.json({ ok: true, name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== 业务接口 (需认证) =====
+
 // 上传配置
 const upload = multer({ dest: path.join(__dirname, "uploads/") });
 
-// ---------- 上传名单 ----------
-app.post("/upload-members", upload.single("file"), (req, res) => {
+// 上传名单
+app.post("/upload-members", authMiddleware, upload.single("file"), (req, res) => {
   try {
     const file = req.file;
     if (!file) throw new Error("没有上传文件");
@@ -49,7 +220,7 @@ app.post("/upload-members", upload.single("file"), (req, res) => {
       次数: m.次数 !== undefined ? m.次数 : 0
     }));
 
-    const memberPath = path.join(__dirname, "members.json");
+    const { memberPath } = getUserFilePaths(req.user.username, req.classId);
     fs.writeFileSync(memberPath, JSON.stringify(members, null, 2), "utf-8");
 
     res.json({ count: members.length, members });
@@ -58,57 +229,74 @@ app.post("/upload-members", upload.single("file"), (req, res) => {
   }
 });
 
-// ---------- 导出当前名单 ----------
+// 导出当前名单
 app.get("/download-members", (req, res) => {
-  const filePath = path.join(__dirname, "members.json");
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "members.json 文件不存在" });
+  const token = req.query.token;
+  const classId = req.query.classId || "default"; // 支持通过 query 传 classId
+  const username = sessions[token];
+
+  if (!username) return res.status(401).send("未登录");
+
+  const { memberPath } = getUserFilePaths(username, classId);
+  if (!fs.existsSync(memberPath)) {
+    return res.status(404).send("尚未上传名单");
   }
-  res.download(filePath, "members.json");
+  res.download(memberPath, "members.json");
 });
 
-// ---------- 生成值日计划 ----------
-app.post("/generate-duty", (req, res) => {
+// 生成值日计划
+app.post("/generate-duty", authMiddleware, (req, res) => {
   try {
-    const { days, peoplePerDay, startDate } = req.body;
-    const result = generateDuty(days, peoplePerDay, startDate);
+    const { days, peoplePerDay, startDate, roles } = req.body;
+    const paths = getUserFilePaths(req.user.username, req.classId);
+    const result = generateDuty(days, peoplePerDay, startDate, paths, roles);
+
+    // 保存排班表到 schedule.json
+    let schedule = [];
+    try { schedule = JSON.parse(fs.readFileSync(paths.schedulePath, "utf-8")); } catch { }
+
+    // 合并/覆盖新生成的日期
+    result.forEach(newItem => {
+      const idx = schedule.findIndex(s => s.date === newItem.date);
+      if (idx >= 0) schedule[idx] = newItem;
+      else schedule.push(newItem);
+    });
+
+    // 按日期排序
+    schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
+    fs.writeFileSync(paths.schedulePath, JSON.stringify(schedule, null, 2), "utf-8");
+
     res.json({ days: result });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// ---------- 新增：监督记录 ----------
-const superviseFile = path.join(__dirname, "supervise.json");
-if (!fs.existsSync(superviseFile)) fs.writeFileSync(superviseFile, "[]", "utf-8");
+// 获取排班表 (用于日历)
+app.get("/api/schedule", authMiddleware, (req, res) => {
+  try {
+    const { schedulePath } = getUserFilePaths(req.user.username, req.classId);
+    let schedule = [];
+    try { schedule = JSON.parse(fs.readFileSync(schedulePath, "utf-8")); } catch { }
+    res.json({ schedule });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-function readJSON(file, def = []) {
-  try { return JSON.parse(fs.readFileSync(file, "utf-8")); }
-  catch { return def; }
-}
-function writeJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
-}
-
-/*
-{
-  date: "...",
-  group: [...],
-  comment: "...",
-  individuals: [
-    { name:"小明",completed:1,score:8,comment:"" }
-  ]
-}
-*/
-
-app.post("/submit-supervise", (req, res) => {
+// 提交监督
+app.post("/submit-supervise", authMiddleware, (req, res) => {
   try {
     const body = req.body;
     if (!body.date || !Array.isArray(body.group) || !Array.isArray(body.individuals)) {
       return res.status(400).json({ error: "请求体缺少 date/group/individuals" });
     }
 
-    const records = readJSON(superviseFile, []);
+    const { supervisePath } = getUserFilePaths(req.user.username, req.classId);
+
+    let records = [];
+    try { records = JSON.parse(fs.readFileSync(supervisePath, "utf-8")); } catch { }
+
     const filtered = records.filter(r => r.date !== body.date);
 
     const newRecord = {
@@ -125,11 +313,13 @@ app.post("/submit-supervise", (req, res) => {
     };
 
     filtered.push(newRecord);
-    writeJSON(superviseFile, filtered);
+    fs.writeFileSync(supervisePath, JSON.stringify(filtered, null, 2), "utf-8");
 
+    // 更新能力值
+    const paths = getUserFilePaths(req.user.username, req.classId);
     newRecord.individuals.forEach(p => {
-      try { applySuperviseUpdate(p.name, p.score !== null ? p.score : (p.completed ? 6 : 4)); }
-      catch {}
+      try { applySuperviseUpdate(p.name, p.score !== null ? p.score : (p.completed ? 6 : 4), paths); }
+      catch { }
     });
 
     res.json({ ok: true, record: newRecord });
@@ -138,13 +328,16 @@ app.post("/submit-supervise", (req, res) => {
   }
 });
 
-// ---------- 按日期获取监督记录 ----------
-app.get("/get-supervise", (req, res) => {
+// 获取监督记录
+app.get("/get-supervise", authMiddleware, (req, res) => {
   try {
     const date = req.query.date;
     if (!date) return res.json({ found: false });
 
-    const records = readJSON(superviseFile, []);
+    const { supervisePath } = getUserFilePaths(req.user.username, req.classId);
+    let records = [];
+    try { records = JSON.parse(fs.readFileSync(supervisePath, "utf-8")); } catch { }
+
     const found = records.find(r => r.date === date);
     if (!found) return res.json({ found: false });
 
@@ -154,12 +347,15 @@ app.get("/get-supervise", (req, res) => {
   }
 });
 
-// ---------- 新增：更新到下一周 ----------
-app.post("/update-week", (req, res) => {
+// 更新到下一周
+app.post("/update-week", authMiddleware, (req, res) => {
   try {
-    const members = readJSON(path.join(__dirname, "members.json"), []);
+    const { memberPath } = getUserFilePaths(req.user.username, req.classId);
+    let members = [];
+    try { members = JSON.parse(fs.readFileSync(memberPath, "utf-8")); } catch { }
+
     if (!Array.isArray(members) || members.length === 0) {
-      return res.status(400).json({ error: "members.json 数据无效" });
+      return res.status(400).json({ error: "数据无效" });
     }
 
     const newMembers = members.map(m => ({
@@ -169,7 +365,7 @@ app.post("/update-week", (req, res) => {
       次数: m.次数
     }));
 
-    writeJSON(path.join(__dirname, "members.json"), newMembers);
+    fs.writeFileSync(memberPath, JSON.stringify(newMembers, null, 2), "utf-8");
 
     res.json({ ok: true, members: newMembers });
   } catch (err) {
@@ -177,7 +373,368 @@ app.post("/update-week", (req, res) => {
   }
 });
 
-// ---------- 启动服务器 ----------
+// ===== 总结模块 API =====
+app.get("/api/summary", authMiddleware, (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) return res.status(400).json({ error: "请提供开始和结束日期" });
+
+    const { supervisePath } = getUserFilePaths(req.user.username, req.classId);
+    let records = [];
+    try { records = JSON.parse(fs.readFileSync(supervisePath, "utf-8")); } catch { }
+
+    // 筛选日期范围
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const filtered = records.filter(r => {
+      const d = new Date(r.date);
+      return d >= start && d <= end;
+    });
+
+    // 统计数据
+    let totalScore = 0;
+    let totalCount = 0;
+    const individualStats = {};
+
+    filtered.forEach(r => {
+      r.individuals.forEach(p => {
+        if (!individualStats[p.name]) individualStats[p.name] = { score: 0, count: 0 };
+        if (p.score !== null) {
+          individualStats[p.name].score += p.score;
+          individualStats[p.name].count += 1;
+          totalScore += p.score;
+          totalCount += 1;
+        }
+      });
+    });
+
+    // 寻找最佳个人 (平均分最高)
+    let bestIndividual = null;
+    let maxAvg = -1;
+    Object.keys(individualStats).forEach(name => {
+      const s = individualStats[name];
+      if (s.count > 0) {
+        const avg = s.score / s.count;
+        if (avg > maxAvg) {
+          maxAvg = avg;
+          bestIndividual = { name, avg: avg.toFixed(1) };
+        }
+      }
+    });
+
+    res.json({
+      range: { startDate, endDate },
+      totalDays: filtered.length,
+      avgScore: totalCount > 0 ? (totalScore / totalCount).toFixed(1) : 0,
+      bestIndividual,
+      records: filtered
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== 排班编辑/预览接口 =====
+
+// 预览排班 (不保存)
+app.post("/api/duty/preview", authMiddleware, (req, res) => {
+  try {
+    const { days, peoplePerDay, startDate, roles, strategy } = req.body;
+    const paths = getUserFilePaths(req.user.username, req.classId);
+    // dryRun = true
+    const result = generateDuty(days, peoplePerDay, startDate, paths, roles, true, strategy);
+    res.json({ days: result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 保存排班 (从预览确认)
+app.post("/api/schedule/save-batch", authMiddleware, (req, res) => {
+  try {
+    const { newSchedule } = req.body; // Array of { date, group }
+    if (!Array.isArray(newSchedule)) return res.status(400).json({ error: "Invalid schedule data" });
+
+    const paths = getUserFilePaths(req.user.username, req.classId);
+    let schedule = [];
+    try { schedule = JSON.parse(fs.readFileSync(paths.schedulePath, "utf-8")); } catch { }
+    let members = [];
+    try { members = JSON.parse(fs.readFileSync(paths.memberPath, "utf-8")); } catch { }
+    let history = [];
+    try { history = JSON.parse(fs.readFileSync(paths.historyPath, "utf-8")); } catch { }
+
+    newSchedule.forEach(item => {
+      // Update Schedule
+      const idx = schedule.findIndex(s => s.date === item.date);
+      if (idx >= 0) schedule[idx] = item;
+      else schedule.push(item);
+
+      // Extract names
+      const names = item.group.map(g => typeof g === 'string' ? g : g.name);
+
+      // Update History
+      history.push(names);
+
+      // Update Member Counts
+      names.forEach(name => {
+        const m = members.find(u => u.name === name);
+        if (m) m.次数 = (m.次数 || 0) + 1;
+      });
+    });
+
+    schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    fs.writeFileSync(paths.schedulePath, JSON.stringify(schedule, null, 2), "utf-8");
+    fs.writeFileSync(paths.memberPath, JSON.stringify(members, null, 2), "utf-8");
+    fs.writeFileSync(paths.historyPath, JSON.stringify(history, null, 2), "utf-8");
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 更新某天排班 (编辑组/人)
+app.post("/api/schedule/update", authMiddleware, (req, res) => {
+  try {
+    const { date, group } = req.body;
+    // group: [{name, role}, ...]
+    if (!date || !group) return res.status(400).json({ error: "Missing date or group" });
+
+    const paths = getUserFilePaths(req.user.username, req.classId);
+    let schedule = [];
+    try { schedule = JSON.parse(fs.readFileSync(paths.schedulePath, "utf-8")); } catch { }
+
+    // We do NOT update member counts here for simplicity (manual edit assumes manual control)
+    // Or we could try to diff... let's stick to just updating the schedule for now.
+
+    const idx = schedule.findIndex(s => s.date === date);
+    if (idx >= 0) {
+      schedule[idx].group = group;
+
+      // If we want to strictly sync history, we might need to update history.json too?
+      // But matching history records to dates is hard (history is just a list).
+      // Let's assume history is append-only logs for generation and doesn't need strict sync with edits.
+    } else {
+      schedule.push({ date, group });
+    }
+
+    schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
+    fs.writeFileSync(paths.schedulePath, JSON.stringify(schedule, null, 2), "utf-8");
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 移动排班 (日历拖拽)
+app.post("/api/schedule/move", authMiddleware, (req, res) => {
+  try {
+    const { fromDate, toDate } = req.body;
+    if (!fromDate || !toDate) return res.status(400).json({ error: "Missing dates" });
+
+    const paths = getUserFilePaths(req.user.username, req.classId);
+    let schedule = [];
+    try { schedule = JSON.parse(fs.readFileSync(paths.schedulePath, "utf-8")); } catch { }
+
+    const fromIdx = schedule.findIndex(s => s.date === fromDate);
+    const toIdx = schedule.findIndex(s => s.date === toDate);
+
+    if (fromIdx === -1) return res.status(404).json({ error: "Source date not found" });
+
+    const fromItem = schedule[fromIdx];
+
+    if (toIdx !== -1) {
+      // Swap
+      const toItem = schedule[toIdx];
+      const tempGroup = fromItem.group;
+      fromItem.group = toItem.group;
+      toItem.group = tempGroup;
+      // We keep dates as is, just swap content
+    } else {
+      // Move to empty slot
+      // Remove from old
+      schedule.splice(fromIdx, 1);
+      // Add to new
+      schedule.push({ date: toDate, group: fromItem.group });
+    }
+
+    schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
+    fs.writeFileSync(paths.schedulePath, JSON.stringify(schedule, null, 2), "utf-8");
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== 全局状态 API (Global Dashboard) =====
+app.get("/api/user/status", authMiddleware, (req, res) => {
+  try {
+    const userDir = getUserRootDir(req.user.username);
+    const items = fs.readdirSync(userDir, { withFileTypes: true });
+
+    // Local Classes
+    let classList = items
+      .filter(item => item.isDirectory())
+      .map(item => ({ name: item.name, isShared: false, owner: req.user.username }));
+
+    // Shared Classes
+    try {
+      const sharedPath = path.join(userDir, "shared_classes.json");
+      if (fs.existsSync(sharedPath)) {
+        const shared = JSON.parse(fs.readFileSync(sharedPath, "utf-8"));
+        // Add shared to list
+        classList = classList.concat(shared.map(s => ({
+          name: s.name, // Display Name
+          isShared: true,
+          owner: s.owner,
+          realDir: getClassDir(req.user.username, s.name) // Resolve true path for checking status
+        })));
+      }
+    } catch (e) { }
+
+    const statusList = classList.map(cls => {
+      let schedule = [], supervise = [];
+      const dir = cls.isShared ? cls.realDir : path.join(userDir, cls.name);
+
+      try {
+        if (fs.existsSync(path.join(dir, "schedule.json")))
+          schedule = JSON.parse(fs.readFileSync(path.join(dir, "schedule.json"), "utf-8"));
+        if (fs.existsSync(path.join(dir, "supervise.json")))
+          supervise = JSON.parse(fs.readFileSync(path.join(dir, "supervise.json"), "utf-8"));
+      } catch { }
+
+      const today = new Date().toISOString().split("T")[0];
+      const todayDuty = schedule.find(s => s.date === today);
+
+      // Pending Duty: Today has duty AND not fully supervised (score given)
+      // Check if today's duty has a record in supervise.json
+      const isSupervised = supervise.some(r => r.date === today);
+      const pendingDuty = !!todayDuty && !isSupervised;
+
+      // Check Next Week
+      // Simplified: Check if schedule has dates > today + 7
+      const nextWeekDate = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+      const nextWeekReady = schedule.some(s => s.date >= nextWeekDate);
+
+      return {
+        name: cls.name,
+        pendingDuty,
+        nextWeekReady,
+        todayDutyGroup: todayDuty ? todayDuty.group : null,
+        isShared: cls.isShared
+      };
+    });
+
+    res.json({ classes: statusList });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== 用户设置 API =====
+app.post("/api/user/update", authMiddleware, (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: "Password required" });
+
+    const users = readUsers();
+    const user = users.find(u => u.username === req.user.username);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    user.password = password;
+    writeUsers(users);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/user/delete", authMiddleware, (req, res) => {
+  try {
+    const users = readUsers();
+    const idx = users.findIndex(u => u.username === req.user.username);
+    if (idx === -1) return res.status(404).json({ error: "User not found" });
+
+    // Remove user entry
+    users.splice(idx, 1);
+    writeUsers(users);
+
+    // Remove data folder
+    const userDir = getUserRootDir(req.user.username);
+    if (fs.existsSync(userDir)) fs.rmdirSync(userDir, { recursive: true });
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== 班级协作 API =====
+const INVITE_FILE = path.join(DATA_ROOT, "invites.json");
+function loadInvites() {
+  try { return JSON.parse(fs.readFileSync(INVITE_FILE, "utf-8")); } catch { return {}; }
+}
+function saveInvites(data) {
+  fs.writeFileSync(INVITE_FILE, JSON.stringify(data, null, 2));
+}
+
+// 生成邀请码 (Owner only)
+app.post("/api/class/invite", authMiddleware, (req, res) => {
+  try {
+    // Generate random code
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const invites = loadInvites();
+
+    // Store mapping: Code -> { owner, classId }
+    invites[code] = { owner: req.user.username, classId: req.classId };
+    saveInvites(invites);
+
+    res.json({ code });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 加入班级
+app.post("/api/class/join", authMiddleware, (req, res) => {
+  try {
+    const { code } = req.body;
+    const invites = loadInvites();
+    const invite = invites[code];
+
+    if (!invite) return res.status(404).json({ error: "Invalid invite code" });
+    if (invite.owner === req.user.username) return res.status(400).json({ error: "Cannot join your own class" });
+
+    // Add to user's "Shared Classes" list
+    // We store this in a special file: `data/<user>/shared_classes.json`
+    const sharedFile = path.join(getUserRootDir(req.user.username), "shared_classes.json");
+    let shared = [];
+    try { shared = JSON.parse(fs.readFileSync(sharedFile, "utf-8")); } catch { }
+
+    // Check duplicate
+    if (shared.some(s => s.owner === invite.owner && s.classId === invite.classId)) {
+      return res.status(400).json({ error: "Already joined this class" });
+    }
+
+    shared.push({
+      name: `[Shared] ${invite.classId} (@${invite.owner})`,
+      originalClassId: invite.classId,
+      owner: invite.owner
+    });
+    fs.writeFileSync(sharedFile, JSON.stringify(shared, null, 2));
+
+    res.json({ ok: true, className: `[Shared] ${invite.classId} (@${invite.owner})` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// Start Server
 app.listen(3000, () => {
-  console.log("✅ 值日通后端已启动：http://localhost:3000");
+  console.log(`Server running at http://localhost:3000`);
 });

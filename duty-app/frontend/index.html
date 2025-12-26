@@ -1,324 +1,872 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="utf-8" />
-  <meta-name="viewport" content="width=device-width, initial-scale=1" />
-  <title>值日通 · 系统</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>值日通 · 智能排班</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- FullCalendar -->
+  <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+  <script src='https://cdn.jsdelivr.net/npm/@fullcalendar/interaction@6.1.10/index.global.min.js'></script>
   <style>
-    html,body{height:100%;overflow:hidden;background:#f5f7fa;}
-    .layout{display:flex;gap:20px;width:100%;max-width:1300px;height:calc(100vh - 90px);}
-    .panel{background:white;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:20px;overflow:auto;}
-    .left-panel{width:420px;flex-shrink:0;display:flex;flex-direction:column;gap:20px;}
-    .right-panel{flex:1;display:flex;flex-direction:column;gap:20px;}
-    .dates-list{display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:260px;}
-    .supervise-section{flex:1;overflow:auto;}
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #f8fafc;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+      transition: all 0.2s ease;
+      border: 1px solid #e2e8f0;
+    }
+
+    .card:hover {
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      transform: translateY(-2px);
+    }
+
+    .btn-primary {
+      background: #3b82f6;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #2563eb;
+    }
+
+    .btn-secondary {
+      background: white;
+      border: 1px solid #cbd5e1;
+      color: #475569;
+    }
+
+    .btn-secondary:hover {
+      background: #f1f5f9;
+    }
+
+    /* Calendar Polish */
+    .fc-daygrid-day-frame {
+      border-radius: 8px;
+      margin: 2px;
+      transition: background 0.2s;
+    }
+
+    .fc-daygrid-day:hover .fc-daygrid-day-frame {
+      background: #f1f5f9;
+    }
+
+    .fc-event {
+      border-radius: 6px;
+      border: none;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    /* Poster Styles (Print) */
+    .poster-container {
+      background: white;
+      border: 8px double #1e293b;
+      padding: 3rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .poster-title {
+      font-family: 'Inter', sans-serif;
+      font-weight: 900;
+      letter-spacing: -0.05em;
+      text-transform: uppercase;
+      border-bottom: 4px solid #1e293b;
+      padding-bottom: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+
+      #summaryPoster,
+      #summaryPoster * {
+        visibility: visible;
+      }
+
+      #summaryPoster {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+      }
+
+      .no-print {
+        display: none !important;
+      }
+    }
   </style>
+  <script>
+    const token = localStorage.getItem('duty_token');
+    const username = localStorage.getItem('duty_user');
+    let currentClassId = localStorage.getItem('duty_class_id') || 'default';
+
+    if (!token) location.href = '/login.html';
+
+    async function api(url, options = {}) {
+      options.headers = {
+        ...options.headers,
+        'Authorization': `Bearer ${token}`,
+        'X-Class-ID': encodeURIComponent(currentClassId)
+      };
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        localStorage.clear();
+        location.href = '/login.html';
+        return;
+      }
+      return res;
+    }
+  </script>
 </head>
 
-<body class="flex flex-col items-center py-5">
+<body class="text-slate-800 h-screen flex flex-col overflow-hidden">
 
-  <h1 class="text-3xl font-bold mb-4 text-blue-700">🧹 值日通</h1>
-
-  <div class="layout">
-
-    <!-- Left Panel -->
-    <div class="left-panel">
-
-      <!-- 上传名单 & 参数 -->
-      <div class="panel">
-        <h2 class="text-xl font-semibold mb-3">名单 & 生成</h2>
-
-        <div class="space-y-3">
-
-          <div>
-            <label class="text-gray-700 block mb-1">上传名单 (.json/.xlsx/.csv)</label>
-            <input id="fileInput" type="file" accept=".json,.xlsx,.csv" class="border rounded p-2 w-full" />
-          </div>
-
-          <div>
-            <label class="text-gray-700 block mb-1">上课天数</label>
-            <input id="days" type="number" class="border rounded p-2 w-full" placeholder="例如 5" />
-          </div>
-
-          <div>
-            <label class="text-gray-700 block mb-1">每日值日人数</label>
-            <input id="people" type="number" class="border rounded p-2 w-full" placeholder="例如 2" />
-          </div>
-
-          <div>
-            <label class="text-gray-700 block mb-1">开始日期</label>
-            <input id="startDate" type="date" class="border rounded p-2 w-full" />
-          </div>
-
-          <div class="flex gap-2 pt-2">
-            <button id="uploadBtn" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded">上传名单</button>
-            <button id="generateBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded">生成名单</button>
-          </div>
-
-          <div>
-            <button id="downloadBtn" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded">导出名单</button>
-          </div>
-
-          <div>
-            <button id="updateWeekBtn" class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded">更新到下一周</button>
-          </div>
-
-          <p id="memberInfo" class="text-sm text-gray-500"></p>
-        </div>
-      </div>
-
-      <!-- 日期列表 -->
-      <div class="panel">
-        <h2 class="text-lg font-semibold mb-2">本周日期</h2>
-        <div id="datesList" class="dates-list text-sm text-gray-600">
-          （生成值日后显示日期）
-        </div>
-      </div>
-
-      <!-- 生成结果 -->
-      <div class="panel">
-        <h2 class="text-lg font-semibold mb-2">值日名单</h2>
-        <table class="min-w-full border border-gray-300 rounded">
-          <thead class="bg-blue-100 text-sm">
-            <tr>
-              <th class="border p-1">日期</th>
-              <th class="border p-1">小组</th>
-            </tr>
-          </thead>
-          <tbody id="resultTable" class="text-sm"></tbody>
-        </table>
-      </div>
-
+  <!-- Global Header -->
+  <header
+    class="bg-white border-b border-slate-200 px-6 py-3 flex justify-between items-center z-20 shadow-sm sticky top-0">
+    <div class="flex items-center gap-4 cursor-pointer" onclick="goHome()">
+      <div
+        class="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-blue-200 shadow-lg">
+        D</div>
+      <h1 class="text-xl font-bold text-slate-800 tracking-tight">值日通</h1>
     </div>
 
-    <!-- Right Panel -->
-    <div class="right-panel">
+    <div class="flex items-center gap-4">
+      <div id="classBreadcrumb"
+        class="hidden flex items-center gap-2 text-sm font-medium text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full transition hover:bg-slate-200">
+        <span onclick="goHome()" class="cursor-pointer hover:text-blue-600 transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6">
+            </path>
+          </svg>
+          首页
+        </span>
+        <span class="text-slate-300">/</span>
+        <span id="currentClassLabel" class="text-slate-800 font-bold">--</span>
+      </div>
 
-      <!-- 监督编辑区 -->
-      <div class="panel supervise-section" id="todaySupervise" style="display:none;">
-        <h2 class="text-xl font-semibold mb-3">监督</h2>
+      <!-- User Menu -->
+      <div class="relative">
+        <button onclick="toggleUserMenu()" class="flex items-center gap-2 focus:outline-none">
+          <div
+            class="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold text-sm border border-slate-200">
+            <span id="userAvatar">U</span>
+          </div>
+          <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+          </svg>
+        </button>
+        <div id="userMenuDropdown"
+          class="hidden absolute right-0 top-full mt-2 w-48 bg-white border border-slate-100 rounded-xl shadow-lg p-1 z-50 transform origin-top-right transition-all">
+          <div class="px-4 py-2 border-b border-slate-50">
+            <div class="text-xs text-slate-400">当前用户</div>
+            <div class="font-bold text-slate-800 truncate" id="menuUsername">User</div>
+          </div>
+          <button onclick="openProfileModal()"
+            class="w-full text-left px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-blue-600 rounded-lg">⚙️
+            账户设置</button>
+          <div class="h-px bg-slate-100 my-1"></div>
+          <button onclick="logout()"
+            class="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg font-medium">退出登录</button>
+        </div>
+      </div>
+    </div>
+  </header>
 
-        <div id="todayInfo" class="mb-3 text-gray-700 text-sm"></div>
+  <!-- Main Content -->
+  <main class="flex-1 overflow-hidden relative bg-slate-50">
 
-        <div id="individualInputs" class="space-y-3 mb-4"></div>
+    <!-- VIEW: Global Dashboard -->
+    <div id="view-global" class="view-section absolute inset-0 p-8 overflow-y-auto">
+      <div class="max-w-5xl mx-auto space-y-8">
+        <div class="flex justify-between items-end">
+          <div>
+            <h2 class="text-3xl font-bold text-slate-800 mb-1">早安, <span id="welcomeUser"></span> 👋</h2>
+            <p class="text-slate-500" id="globalDateStr"></p>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="joinClassModal()"
+              class="btn-secondary px-4 py-2 rounded-lg text-sm font-medium shadow-sm">加入班级</button>
+            <button onclick="createNewClass()"
+              class="btn-primary px-4 py-2 rounded-lg text-sm font-medium shadow-md flex items-center gap-2">新建班级</button>
+          </div>
+        </div>
+        <div id="reminderSection" class="hidden animate-fade-in-down">
+          <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">待办提醒</h3>
+          <div id="reminderList" class="grid gap-3"></div>
+        </div>
+        <div>
+          <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">我的班级</h3>
+          <div id="classGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+          <div id="emptyClass"
+            class="hidden text-center py-12 bg-white rounded-xl border border-dashed border-slate-300">
+            <p class="text-slate-400 mb-4">还没有班级，快去创建一个吧！</p>
+            <button onclick="createNewClass()" class="text-blue-600 font-bold hover:underline">立即创建</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-        <label class="block mb-1 text-gray-700">留言：</label>
-        <textarea id="dayComment" class="border rounded p-2 w-full mb-4" rows="2"></textarea>
-
+    <!-- VIEW: Class Dashboard -->
+    <div id="view-class" class="view-section absolute inset-0 hidden flex flex-col bg-white">
+      <div class="border-b border-slate-200 px-6 py-2 flex justify-between items-center bg-white shadow-sm z-10">
+        <div class="flex gap-1 bg-slate-100 p-1 rounded-lg">
+          <button onclick="switchClassTab('calendar')"
+            class="class-tab active px-4 py-1.5 rounded-md text-sm font-medium transition" data-tab="calendar">📅
+            排班日历</button>
+          <button onclick="switchClassTab('summary')"
+            class="class-tab px-4 py-1.5 rounded-md text-sm font-medium transition" data-tab="summary">📊 周报总结</button>
+          <button onclick="switchClassTab('settings')"
+            class="class-tab px-4 py-1.5 rounded-md text-sm font-medium transition" data-tab="settings">⚙️
+            管理/生成</button>
+        </div>
         <div class="flex gap-2">
-          <button id="submitTodayBtn"
-                  class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded">
-            提交监督
-          </button>
-          <div id="submitStatus" class="text-sm text-gray-600 self-center"></div>
+          <span class="text-xs text-slate-400 self-center">提示: 日历支持拖拽修改</span>
+          <button onclick="checkNextWeek()"
+            class="text-sm bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg font-medium transition">🔄
+            检查下周</button>
         </div>
       </div>
 
-      <!-- 查看监督记录 -->
-      <div class="panel supervise-section" id="viewSupervise" style="display:none;">
-        <h2 class="text-xl font-semibold mb-3">监督记录</h2>
-        <div id="viewDate" class="font-medium mb-2"></div>
-        <div id="viewComment" class="text-gray-700 mb-3 text-sm"></div>
-        <div id="viewIndividuals" class="space-y-2 text-sm"></div>
+      <div class="flex-1 overflow-hidden relative">
+        <!-- Tab: Calendar -->
+        <div id="tab-calendar" class="class-tab-content absolute inset-0 p-6 overflow-y-auto">
+          <div id="calendar" class="h-full"></div>
+        </div>
+
+        <!-- Tab: Summary -->
+        <div id="tab-summary" class="class-tab-content absolute inset-0 p-6 hidden overflow-y-auto bg-slate-50">
+          <!-- (Summary content same as before) -->
+          <div class="max-w-4xl mx-auto">
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex gap-4 items-end no-print">
+              <div><label class="text-xs font-bold text-slate-500 uppercase block mb-1">开始日期</label><input
+                  id="sumStartDate" type="date" class="border rounded px-3 py-2 text-sm" /></div>
+              <div><label class="text-xs font-bold text-slate-500 uppercase block mb-1">结束日期</label><input
+                  id="sumEndDate" type="date" class="border rounded px-3 py-2 text-sm" /></div>
+              <button onclick="generateSummary()"
+                class="btn-primary px-5 py-2 rounded-lg text-sm font-bold shadow-blue-200 shadow-md">生成海报</button>
+              <button onclick="window.print()"
+                class="btn-secondary px-5 py-2 rounded-lg text-sm font-bold ml-auto">打印海报</button>
+            </div>
+            <div id="summaryPoster" class="poster-container hidden">
+              <div class="text-center">
+                <h2 class="poster-title text-4xl text-slate-900">值日周报</h2>
+                <p class="text-slate-500 font-medium mb-8" id="posterDateRange">--</p>
+              </div>
+              <div class="grid grid-cols-2 gap-8 mb-10">
+                <div class="bg-yellow-50 p-6 border-l-4 border-yellow-400">
+                  <div class="text-yellow-600 font-bold text-sm uppercase mb-2">本周之星 🏆</div>
+                  <div class="text-4xl font-bold text-slate-900 mb-1" id="posterStar">--</div>
+                  <div class="text-sm text-slate-600">平均分: <span id="posterStarScore" class="font-bold">--</span></div>
+                </div>
+                <div class="bg-blue-50 p-6 border-l-4 border-blue-400">
+                  <div class="text-blue-600 font-bold text-sm uppercase mb-2">班级平均分 📊</div>
+                  <div class="text-4xl font-bold text-slate-900 mb-1" id="posterAvg">--</div>
+                  <div class="text-sm text-slate-600">综合表现</div>
+                </div>
+              </div>
+              <div class="mb-10">
+                <h3
+                  class="text-lg font-bold text-slate-800 border-b-2 border-slate-100 pb-2 mb-4 flex items-center gap-2">
+                  <span>⚠️</span> 未完成值日</h3>
+                <div id="posterMissed" class="flex flex-wrap gap-2 text-slate-600 italic">无</div>
+              </div>
+              <div class="mb-10">
+                <h3 class="text-lg font-bold text-slate-800 border-b-2 border-slate-100 pb-2 mb-4">每日详情</h3>
+                <div id="posterDaily" class="space-y-4"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Settings -->
+        <div id="tab-settings"
+          class="class-tab-content absolute inset-0 p-6 hidden overflow-y-auto bg-slate-50 flex justify-center">
+          <div class="w-full max-w-2xl space-y-6">
+            <div class="card p-6">
+              <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2"><span>📂</span> 名单管理</h3>
+                <button onclick="createInviteCode()" class="text-blue-600 text-sm font-medium hover:underline">📡 生成邀请码
+                  (共创)</button>
+              </div>
+              <input id="fileInput" type="file" accept=".json,.xlsx,.csv" class="hidden" />
+              <label for="fileInput"
+                class="block w-full text-center py-8 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition text-sm text-slate-600 mb-4 bg-slate-50">
+                <div class="text-2xl mb-2">📄</div><span id="fileNameDisplay">点击选择 Excel / JSON 文件</span>
+              </label>
+              <button id="uploadBtn" class="w-full btn-primary py-2.5 rounded-lg text-sm font-medium">上传更新名单</button>
+            </div>
+
+            <div class="card p-6">
+              <h3 class="font-bold text-lg mb-4 text-slate-800 flex items-center gap-2"><span>⚡</span> 生成排班</h3>
+              <div class="grid grid-cols-2 gap-4 mb-4">
+                <div><label class="text-xs font-bold text-slate-500 uppercase block mb-1">天数</label><input id="genDays"
+                    type="number" class="w-full border rounded px-3 py-2 text-sm" value="5" /></div>
+                <div><label class="text-xs font-bold text-slate-500 uppercase block mb-1">人数/天</label><input
+                    id="genPeople" type="number" class="w-full border rounded px-3 py-2 text-sm" value="4" /></div>
+                <div class="col-span-2"><label
+                    class="text-xs font-bold text-slate-500 uppercase block mb-1">开始日期</label><input id="genStartDate"
+                    type="date" class="w-full border rounded px-3 py-2 text-sm" /></div>
+                <div class="col-span-2"><label class="text-xs font-bold text-slate-500 uppercase block mb-1">生成策略
+                    (优先级)</label>
+                  <select id="genStrategy" class="w-full border rounded px-3 py-2 text-sm bg-white">
+                    <option value="default">⚖️ 默认均衡 (推荐)</option>
+                    <option value="high_ability">💪 能力优先 (强强联合)</option>
+                    <option value="low_ability">🌱 帮扶优先 (弱弱联合?)</option>
+                    <option value="low_freq">⏳ 次数优先 (确保人人轮到)</option>
+                    <option value="random">🎲 完全随机</option>
+                  </select>
+                </div>
+                <div class="col-span-2"><label
+                    class="text-xs font-bold text-slate-500 uppercase block mb-1">职务分配</label><input id="genRoles"
+                    type="text" class="w-full border rounded px-3 py-2 text-sm" placeholder="组长, 扫地, 擦窗" /></div>
+              </div>
+              <button onclick="previewDuty()"
+                class="w-full btn-primary py-3 rounded-lg text-sm font-bold shadow-md hover:shadow-lg transition">预览新排班</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Modal: Preview -->
+  <div id="modalPreview"
+    class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+        <h3 class="font-bold text-lg text-slate-800">排班预览</h3>
+        <button onclick="closeModal('modalPreview')"
+          class="text-slate-400 hover:text-slate-600 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-6" id="previewList"></div>
+      <div class="p-6 border-t border-slate-100 flex justify-end gap-3 bg-white rounded-b-2xl">
+        <button onclick="closeModal('modalPreview')" class="btn-secondary px-6 py-2 rounded-lg font-medium">取消</button>
+        <button onclick="savePreview()" class="btn-primary px-6 py-2 rounded-lg font-bold shadow-md">确认并应用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Supervise / Edit -->
+  <div id="modalSupervise"
+    class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+        <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2"><span>📝</span> <span
+            id="modalDate">--</span></h3>
+        <button onclick="closeModal('modalSupervise')"
+          class="text-slate-400 hover:text-slate-600 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+      </div>
+      <div class="p-6 overflow-y-auto flex-1">
+
+        <!-- View Mode: Group Display -->
+        <div id="superviseViewMode">
+          <div class="mb-4 bg-slate-50 p-3 rounded-lg border border-slate-100 relative group">
+            <div class="text-xs font-bold text-slate-400 uppercase mb-2 flex justify-between items-center">
+              <span>值日小组</span>
+              <button onclick="toggleGroupEdit()" class="text-blue-500 hover:underline text-xs">编辑名单/职务</button>
+            </div>
+            <div id="modalGroup" class="flex flex-wrap gap-2"></div>
+          </div>
+
+          <!-- Content for Score/View -->
+          <div id="modalContentEdit" class="hidden space-y-4">
+            <div id="modalInputs" class="space-y-4"></div>
+            <textarea id="modalComment" class="w-full border rounded-lg p-3 h-24 text-sm resize-none"
+              placeholder="整体评价..."></textarea>
+            <button onclick="submitSupervise()"
+              class="w-full btn-primary py-3 rounded-xl font-bold font-medium">提交评分</button>
+          </div>
+          <div id="modalContentView" class="hidden space-y-4">
+            <div id="modalViewList" class="space-y-3"></div>
+            <div class="bg-yellow-50 p-4 rounded-xl text-sm italic border border-yellow-100 flex gap-2"><span>💬</span>
+              <span id="modalViewComment"></span></div>
+            <button onclick="enableEdit()"
+              class="w-full btn-secondary py-2 rounded-lg text-sm font-medium">修改评分</button>
+          </div>
+        </div>
+
+        <!-- Edit Mode: Group Modification -->
+        <div id="superviseEditMode" class="hidden">
+          <div class="text-sm text-slate-500 mb-4">修改本日值日人员及职务：</div>
+          <div id="editGroupList" class="space-y-2 mb-4"></div>
+          <div class="flex gap-2 mb-4">
+            <input id="newMemberName" type="text" placeholder="输入姓名加入"
+              class="border rounded px-3 py-2 text-sm flex-1" />
+            <button onclick="addNewMember()" class="btn-secondary px-3 py-2 rounded text-sm">添加</button>
+          </div>
+          <div class="flex justify-end gap-2 border-t pt-4">
+            <button onclick="toggleGroupEdit()" class="btn-secondary px-4 py-2 rounded-lg text-sm">取消</button>
+            <button onclick="saveGroupEdit()" class="btn-primary px-4 py-2 rounded-lg text-sm">保存修改</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Profile / Settings -->
+  <div id="modalProfile"
+    class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
+      <div
+        class="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4"
+        id="profileAvatar">U</div>
+      <h3 class="font-bold text-xl text-slate-800 mb-1" id="profileName">User</h3>
+      <p class="text-sm text-slate-500 mb-6">当前班级: <span id="profileClass">--</span></p>
+
+      <div class="space-y-3 mb-6" id="profileActions">
+        <button onclick="showChangePassword()" class="w-full btn-secondary py-2 rounded-lg text-sm">修改密码</button>
+        <button onclick="deleteAccount()"
+          class="w-full text-red-500 border border-red-200 hover:bg-red-50 py-2 rounded-lg text-sm">注销账户</button>
       </div>
 
+      <!-- Change Pwd Form -->
+      <div id="changePwdForm" class="hidden text-left space-y-3 mb-6">
+        <input id="newPwd" type="password" placeholder="新密码" class="w-full border rounded px-3 py-2 text-sm" />
+        <button onclick="submitChangePwd()" class="w-full btn-primary py-2 rounded-lg text-sm">确认修改</button>
+        <button onclick="hideChangePwd()" class="w-full text-slate-400 text-xs text-center hover:underline">取消</button>
+      </div>
+
+      <div class="text-left bg-slate-50 p-4 rounded-lg text-xs text-slate-400 space-y-1 mt-4">
+        <p><strong>版本:</strong> v2.2.0 (Plus)</p>
+        <p><strong>开发者:</strong> Antigravity AI</p>
+      </div>
+      <button onclick="closeModal('modalProfile')" class="w-full btn-secondary py-2 rounded-lg mt-4">关闭</button>
     </div>
   </div>
 
   <script>
-    function formatDate(d){return new Date(d).toISOString().split("T")[0];}
+    // --- Global State ---
+    const userInitial = (username || 'U')[0].toUpperCase();
+    document.getElementById('userAvatar').innerText = userInitial;
+    document.getElementById('profileAvatar').innerText = userInitial;
+    document.getElementById('menuUsername').innerText = username || '用户';
+    document.getElementById('profileName').innerText = username || '用户';
+    document.getElementById('welcomeUser').innerText = username || '用户';
+    document.getElementById('globalDateStr').innerText = new Date().toLocaleDateString('zh-CN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-    let currentGeneratedDays=[];
-    let membersCount=0;
+    function toggleUserMenu() {
+      const menu = document.getElementById('userMenuDropdown');
+      menu.classList.toggle('hidden');
+    }
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.relative')) document.getElementById('userMenuDropdown').classList.add('hidden');
+    });
 
-    const uploadBtn=document.getElementById("uploadBtn");
-    const fileInput=document.getElementById("fileInput");
-    const generateBtn=document.getElementById("generateBtn");
-    const memberInfo=document.getElementById("memberInfo");
-    const resultTable=document.getElementById("resultTable");
-    const downloadBtn=document.getElementById("downloadBtn");
-    const updateWeekBtn=document.getElementById("updateWeekBtn");
-
-    const datesList=document.getElementById("datesList");
-    const todaySupervise=document.getElementById("todaySupervise");
-    const individualInputs=document.getElementById("individualInputs");
-    const dayComment=document.getElementById("dayComment");
-    const submitTodayBtn=document.getElementById("submitTodayBtn");
-    const submitStatus=document.getElementById("submitStatus");
-
-    const viewSupervise=document.getElementById("viewSupervise");
-    const viewDate=document.getElementById("viewDate");
-    const viewComment=document.getElementById("viewComment");
-    const viewIndividuals=document.getElementById("viewIndividuals");
-
-    uploadBtn.onclick=async()=>{
-      const file=fileInput.files[0];
-      if(!file)return alert("请选择文件");
-
-      const fd=new FormData();
-      fd.append("file",file);
-
-      try{
-        const res=await fetch("/upload-members",{method:"POST",body:fd});
-        const data=await res.json();
-        if(!res.ok)throw new Error(data.error);
-        membersCount=data.count||0;
-        memberInfo.innerText=`已导入 ${membersCount} 名成员`;
-      }catch(e){alert("文件上传失败："+e.message);}
-    };
-
-    downloadBtn.onclick=()=>{location.href="/download-members";};
-
-    updateWeekBtn.onclick=async()=>{
-      try{
-        const res=await fetch("/update-week",{method:"POST"});
-        const j=await res.json();
-        if(!res.ok)throw new Error(j.error);
-        alert("成功更新到下一周 ✓");
-      }catch(e){alert("更新失败："+e.message);}
-    };
-
-    generateBtn.onclick=async()=>{
-      const days=Number(document.getElementById("days").value);
-      const people=Number(document.getElementById("people").value);
-      const startDate=document.getElementById("startDate").value;
-
-      if(!days||!people||!startDate){return alert("请填写完整参数");}
-
-      resultTable.innerHTML="";
-      datesList.innerHTML="";
-      todaySupervise.style.display="none";
-      viewSupervise.style.display="none";
-
-      try{
-        const res=await fetch("/generate-duty",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({days,peoplePerDay:people,startDate})
-        });
-        const data=await res.json();
-        if(!res.ok)throw new Error(data.error);
-
-        currentGeneratedDays=data.days;
-
-        currentGeneratedDays.forEach(item=>{
-          const tr=document.createElement("tr");
-          tr.innerHTML=`
-            <td class="border p-1 text-center">${item.date}</td>
-            <td class="border p-1 text-center">${item.group.join("、")}</td>`;
-          resultTable.appendChild(tr);
-
-          const btn=document.createElement("button");
-          btn.className="p-2 rounded hover:bg-gray-100 text-left";
-          btn.textContent=item.date;
-          btn.onclick=()=>loadDay(item);
-          datesList.appendChild(btn);
-        });
-
-      }catch(e){alert(e.message);}
-    };
-
-    function loadDay(item){
-      setupTodayEditable(item.date,item.group);
-
-      fetch(`/get-supervise?date=${item.date}`)
-       .then(r=>r.json())
-       .then(d=>{
-         viewSupervise.style.display="block";
-         viewDate.innerText=item.date+" 的记录";
-
-         if(!d.found){
-           viewComment.innerText="暂无监督记录";
-           viewIndividuals.innerHTML="";
-           return;
-         }
-
-         viewComment.innerText=d.record.comment||"（无留言）";
-         viewIndividuals.innerHTML="";
-         d.record.individuals.forEach(p=>{
-           const div=document.createElement("div");
-           div.className="p-2 border rounded";
-           div.innerHTML=`<b>${p.name}</b> | 完成：${p.completed?"是":"否"} | 评分：${p.score||"-"} | 备注：${p.comment||""}`;
-           viewIndividuals.appendChild(div);
-         });
-       });
+    function logout() {
+      api('/api/logout', { method: 'POST' });
+      localStorage.clear();
+      location.href = '/login.html';
     }
 
-    function setupTodayEditable(date,group){
-      todaySupervise.style.display="block";
-      viewSupervise.style.display="none";
+    // --- Navigation & Dashboard ---
+    function goHome() {
+      document.getElementById('view-global').classList.remove('hidden');
+      document.getElementById('view-class').classList.add('hidden');
+      document.getElementById('classBreadcrumb').classList.add('hidden');
+      loadGlobalDashboard();
+    }
+    async function loadGlobalDashboard() {
+      try {
+        const res = await api('/api/user/status');
+        if (!res) return;
+        const data = await res.json();
+        const grid = document.getElementById('classGrid');
+        grid.innerHTML = '';
+        if (data.classes.length === 0) document.getElementById('emptyClass').classList.remove('hidden');
+        else document.getElementById('emptyClass').classList.add('hidden');
 
-      document.getElementById("todayInfo").innerText=`日期：${date}（${group.join("、")}）`;
-      individualInputs.innerHTML="";
-      dayComment.value="";
-      submitStatus.innerText="";
+        data.classes.forEach(c => {
+          const card = document.createElement('div');
+          card.className = "card p-6 cursor-pointer hover:border-blue-400 group relative overflow-hidden flex flex-col justify-between h-40";
 
-      group.forEach(name=>{
-        const row=document.createElement("div");
-        row.className="flex gap-3 items-center";
+          let badge = '';
+          if (c.isShared) badge = `<span class="absolute top-2 right-2 bg-purple-100 text-purple-600 text-[10px] px-2 py-0.5 rounded-full font-bold">已加入</span>`;
 
-        row.innerHTML=`
-          <div class="w-32 font-medium">${name}</div>
-          <select data-name="${name}" class="border rounded p-1">
-            <option value="1">已完成</option>
-            <option value="0">未完成</option>
-          </select>
-          <input type="number" min="1" max="10" data-name="${name}" class="border rounded p-1 w-20" placeholder="评分" />
-          <input type="text" data-name="${name}" class="border rounded p-1 flex-1" placeholder="备注" />
-        `;
-
-        individualInputs.appendChild(row);
+          card.onclick = () => enterClass(c.name);
+          card.innerHTML = `${badge}<div><h3 class="text-xl font-bold text-slate-800 mb-1 truncate">${c.name}</h3><div class="text-xs text-slate-400">${c.nextWeekReady ? '下周已排班' : '下周未排班'}</div></div><div class="flex items-center gap-2 ${c.pendingDuty ? 'text-orange-500 font-medium' : 'text-emerald-500 font-medium'} text-sm mt-4"><span class="w-2 h-2 rounded-full ${c.pendingDuty ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'}"></span><span>${c.pendingDuty ? '今日待评分' : '今日已完成'}</span></div>`;
+          grid.appendChild(card);
+        });
+      } catch (e) { console.error(e); }
+    }
+    async function createNewClass() {
+      const name = prompt("请输入班级名称 (支持中文):");
+      if (!name) return;
+      await api('/api/class/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      loadGlobalDashboard();
+    }
+    function enterClass(classId) {
+      currentClassId = classId;
+      localStorage.setItem('duty_class_id', classId);
+      document.getElementById('view-global').classList.add('hidden');
+      document.getElementById('view-class').classList.remove('hidden');
+      document.getElementById('classBreadcrumb').classList.remove('hidden');
+      document.getElementById('currentClassLabel').innerText = classId;
+      document.getElementById('profileClass').innerText = classId;
+      switchClassTab('calendar');
+    }
+    function switchClassTab(tab) {
+      document.querySelectorAll('.class-tab').forEach(b => {
+        const active = b.dataset.tab === tab;
+        b.classList.toggle('active', active); b.classList.toggle('text-blue-600', active); b.classList.toggle('bg-blue-50', active); b.classList.toggle('text-slate-500', !active); b.classList.toggle('bg-white', !active);
       });
-
-      submitTodayBtn.onclick=async()=>{
-        const individuals=[];
-        const rows=individualInputs.querySelectorAll("div");
-
-        rows.forEach(r=>{
-          const name=r.querySelector("div").innerText;
-          const completed=r.querySelector("select").value;
-          const score=r.querySelector("input[type='number']").value;
-          const comment=r.querySelector("input[type='text']").value;
-
-          individuals.push({
-            name,
-            completed:Number(completed),
-            score:score?Number(score):null,
-            comment:comment||""
-          });
-        });
-
-        const payload={
-          date,
-          group,
-          comment:dayComment.value||"",
-          individuals
-        };
-
-        submitStatus.innerText="提交中...";
-        submitTodayBtn.disabled=true;
-
-        try{
-          const r=await fetch("/submit-supervise",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify(payload)
-          });
-          const j=await r.json();
-          if(!r.ok)throw new Error(j.error);
-          submitStatus.innerText="提交成功 ✓";
-          loadDay({date,group});
-        }catch(e){
-          submitStatus.innerText="提交失败："+e.message;
-        }finally{
-          submitTodayBtn.disabled=false;
-          setTimeout(()=>submitStatus.innerText="",2500);
-        }
-      };
+      document.querySelectorAll('.class-tab-content').forEach(c => c.classList.add('hidden'));
+      document.getElementById(`tab-${tab}`).classList.remove('hidden');
+      if (tab === 'calendar') { setTimeout(() => calendar.render(), 100); loadSchedule(); }
     }
-  </script>
+    function openProfileModal() { document.getElementById('modalProfile').classList.remove('hidden'); toggleUserMenu(); }
+    window.closeModal = (id) => document.getElementById(id).classList.add('hidden');
 
+    // --- Profile & Collaboration ---
+    function showChangePassword() {
+      document.getElementById('profileActions').classList.add('hidden');
+      document.getElementById('changePwdForm').classList.remove('hidden');
+    }
+    function hideChangePwd() {
+      document.getElementById('profileActions').classList.remove('hidden');
+      document.getElementById('changePwdForm').classList.add('hidden');
+    }
+    async function submitChangePwd() {
+      const pwd = document.getElementById('newPwd').value;
+      if (!pwd) return alert("密码不能为空");
+      if (confirm("确定修改密码?")) {
+        const res = await api('/api/user/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
+        if (res.ok) { alert("修改成功, 请重新登录"); logout(); }
+        else alert("修改失败");
+      }
+    }
+    async function deleteAccount() {
+      if (confirm("⚠️ 确定要永久删除账号吗? 数据将无法恢复!")) {
+        const res = await api('/api/user/delete', { method: 'POST' });
+        if (res.ok) { alert("账号已删除"); logout(); }
+        else alert("删除失败");
+      }
+    }
+    async function createInviteCode() { // For current class
+      const res = await api('/api/class/invite', { method: 'POST' });
+      const data = await res.json();
+      prompt("🎉 邀请码生成成功! \n请将此码发送给其他用户:", data.code);
+    }
+    async function joinClassModal() {
+      const code = prompt("请输入 6 位邀请码:");
+      if (!code) return;
+      const res = await api('/api/class/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`成功加入: ${data.className}`);
+        loadGlobalDashboard();
+      } else {
+        const e = await res.json();
+        alert("加入失败: " + e.error);
+      }
+    }
+
+    // --- Calendar, Preview & Editing (Reused) ---
+    let calendar;
+    let currentSchedule = [];
+    let currentModalDate = null;
+    let currentModalItem = null;
+    let previewData = [];
+
+    document.addEventListener('DOMContentLoaded', () => {
+      loadGlobalDashboard();
+      calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
+        initialView: 'dayGridMonth',
+        locale: 'zh-cn',
+        editable: true,
+        droppable: true,
+        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listWeek' },
+        height: '100%',
+        events: [],
+        eventContent: function (arg) {
+          const group = arg.event.extendedProps.group;
+          let html = `<div class="p-1 overflow-hidden h-full flex flex-col gap-0.5">`;
+          group.forEach((m, i) => {
+            if (i > 3) return;
+            const name = typeof m === 'string' ? m : m.name;
+            const role = typeof m === 'string' ? (i === 0 ? '👑' : '') : m.role;
+            html += `<div class="text-xs truncate flex items-center gap-1 ${role.includes('组长') || role.includes('班长') ? 'font-bold text-yellow-600' : ''}"><span>${name}</span>${role ? `<span class="opacity-75 scale-75 origin-left bg-white/50 px-1 rounded">${role}</span>` : ''}</div>`;
+          });
+          html += `</div>`;
+          return { html };
+        },
+        dateClick: (info) => openSuperviseModal(info.dateStr),
+        eventClick: (info) => openSuperviseModal(info.event.startStr),
+        eventDrop: async function (info) {
+          const fromDate = info.oldEvent.startStr;
+          const toDate = info.event.startStr;
+          if (!confirm(`确认移动/交换排班? \n${fromDate} -> ${toDate}`)) {
+            info.revert();
+            return;
+          }
+          try {
+            await api('/api/schedule/move', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fromDate, toDate })
+            });
+            loadSchedule();
+          } catch (e) {
+            alert("移动失败: " + e.message);
+            info.revert();
+          }
+        }
+      });
+    });
+
+    async function loadSchedule() { /* Same */
+      const res = await api('/api/schedule');
+      const data = await res.json();
+      currentSchedule = data.schedule;
+      const events = currentSchedule.map(item => ({
+        start: item.date,
+        allDay: true,
+        extendedProps: { group: item.group },
+        backgroundColor: new Date(item.date) < new Date() ? '#e2e8f0' : '#dbeafe',
+        textColor: '#1e293b',
+        className: 'cursor-move hover:brightness-95 transition border-l-4 border-blue-500'
+      }));
+      calendar.removeAllEvents();
+      calendar.addEventSource(events);
+    }
+
+    async function previewDuty() {
+      const rolesStr = document.getElementById('genRoles').value;
+      const roles = rolesStr ? rolesStr.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+      const strategy = document.getElementById('genStrategy').value; // Get Strategy
+      try {
+        const res = await api("/api/duty/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            days: Number(document.getElementById("genDays").value),
+            peoplePerDay: Number(document.getElementById("genPeople").value),
+            startDate: document.getElementById("genStartDate").value,
+            roles: roles,
+            strategy: strategy // Pass Strategy
+          })
+        });
+        const data = await res.json();
+        previewData = data.days;
+        renderPreview(previewData);
+      } catch (e) { alert(e.message); }
+    }
+
+    function renderPreview(days) { /* Same */
+      const list = document.getElementById('previewList');
+      list.innerHTML = '';
+      days.forEach(d => {
+        const div = document.createElement('div');
+        div.className = "flex items-center py-3 border-b border-slate-50 last:border-0";
+        const names = d.group.map(m => `<span class="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs mr-1">${m.name} <span class="opacity-50">${m.role}</span></span>`).join('');
+        div.innerHTML = `<div class="w-32 font-bold text-slate-500">${d.date}</div><div class="flex-1 flex flex-wrap">${names}</div>`;
+        list.appendChild(div);
+      });
+      document.getElementById('modalPreview').classList.remove('hidden');
+    }
+
+    async function savePreview() { /* Same */
+      try {
+        await api('/api/schedule/save-batch', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newSchedule: previewData })
+        });
+        closeModal('modalPreview');
+        alert("排班已保存 ✅");
+        switchClassTab('calendar');
+      } catch (e) { alert(e.message); }
+    }
+
+    // --- Supervise & Edit Group ---
+    async function openSuperviseModal(date) { /* Same */
+      // ... same logic
+      const item = currentSchedule.find(s => s.date === date);
+      if (!item) return;
+      currentModalDate = date;
+      currentModalItem = item;
+      document.getElementById('modalDate').innerText = date;
+      document.getElementById('modalSupervise').classList.remove('hidden');
+      document.getElementById('superviseViewMode').classList.remove('hidden');
+      document.getElementById('superviseEditMode').classList.add('hidden');
+      renderModalGroup(item.group);
+      const res = await api(`/get-supervise?date=${date}&t=${Date.now()}`);
+      const data = await res.json();
+      if (data.found) renderModalView(data.record);
+      else renderModalEdit(item);
+    }
+
+    function renderModalGroup(group) { /* Same */
+      const html = group.map((m, idx) => {
+        const name = typeof m === 'string' ? m : m.name;
+        const role = typeof m === 'string' ? '' : m.role;
+        return `<div class="flex items-center gap-1 px-2 py-1 rounded border text-sm ${role ? 'bg-yellow-50 text-yellow-800 border-yellow-200' : 'bg-slate-100 border-slate-200'}"><span class="font-bold">${name}</span>${role ? `<span class="text-[10px] opacity-75 ml-1">${role}</span>` : ''}</div>`;
+      }).join("");
+      document.getElementById('modalGroup').innerHTML = html;
+    }
+
+    // Interaction: Toggle Edit Group
+    let editingGroupTemp = [];
+    function toggleGroupEdit() { /* Same */
+      const view = document.getElementById('superviseViewMode');
+      const edit = document.getElementById('superviseEditMode');
+      if (view.classList.contains('hidden')) { view.classList.remove('hidden'); edit.classList.add('hidden'); }
+      else { view.classList.add('hidden'); edit.classList.remove('hidden'); editingGroupTemp = JSON.parse(JSON.stringify(currentModalItem.group)); renderEditGroupList(); }
+    }
+    function renderEditGroupList() { /* Same */
+      const container = document.getElementById('editGroupList');
+      container.innerHTML = '';
+      editingGroupTemp.forEach((m, idx) => {
+        const name = typeof m === 'string' ? m : m.name;
+        const role = typeof m === 'string' ? '' : m.role;
+        const div = document.createElement('div');
+        div.className = "flex items-center gap-2";
+        div.innerHTML = `<div class="w-8 h-8 flex items-center justify-center bg-slate-100 rounded text-slate-500 font-bold">${idx + 1}</div><div class="flex-1 font-bold text-slate-700">${name}</div><input type="text" value="${role}" class="border rounded px-2 py-1 text-xs w-24" placeholder="职务" onchange="updateGroupRole(${idx}, this.value)" /><button onclick="removeGroupMember(${idx})" class="text-red-400 hover:text-red-600">✕</button>`;
+        container.appendChild(div);
+      });
+    }
+    window.updateGroupRole = (idx, val) => { editingGroupTemp[idx].role = val; };
+    window.removeGroupMember = (idx) => { editingGroupTemp.splice(idx, 1); renderEditGroupList(); };
+    window.addNewMember = () => { /* Same */
+      const name = document.getElementById('newMemberName').value;
+      if (!name) return;
+      editingGroupTemp.push({ name, role: '' });
+      document.getElementById('newMemberName').value = '';
+      renderEditGroupList();
+    };
+    window.saveGroupEdit = async () => { /* Same */
+      try {
+        await api('/api/schedule/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: currentModalDate, group: editingGroupTemp })
+        });
+        currentModalItem.group = editingGroupTemp;
+        renderModalGroup(editingGroupTemp);
+        const res = await api(`/get-supervise?date=${currentModalDate}&t=${Date.now()}`);
+        const data = await res.json();
+        if (!data.found) renderModalEdit(currentModalItem);
+        toggleGroupEdit(); loadSchedule();
+      } catch (e) { alert(e.message); }
+    };
+
+    function renderModalEdit(item) { /* Same */
+      document.getElementById('modalContentEdit').classList.remove('hidden');
+      document.getElementById('modalContentView').classList.add('hidden');
+      const container = document.getElementById('modalInputs');
+      container.innerHTML = '';
+      document.getElementById('modalComment').value = '';
+      const group = Array.isArray(item.group) ? item.group : [];
+      group.forEach(m => {
+        const name = typeof m === 'string' ? m : m.name;
+        const role = typeof m === 'string' ? '' : m.role;
+        const div = document.createElement('div');
+        div.className = "bg-white border rounded-lg p-3 shadow-sm";
+        div.innerHTML = `<div class="flex justify-between items-center mb-2"><div class="flex items-center gap-2"><span class="font-bold text-slate-700">${name}</span>${role ? `<span class="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">${role}</span>` : ''}</div><select data-name="${name}" class="text-sm border rounded bg-slate-50 px-2 py-1 outline-none focus:border-blue-500"><option value="1">✅ 完成</option><option value="0">❌ 未完成 (0分)</option></select></div><div class="flex gap-2"><input type="number" data-name="${name}" min="1" max="10" class="w-24 border rounded px-2 py-1 text-sm outline-none" placeholder="评分" /><input type="text" data-name="${name}" class="flex-1 border rounded px-2 py-1 text-sm outline-none" placeholder="备注..." /></div>`;
+        container.appendChild(div);
+      });
+    }
+    function renderModalView(record) { /* Same */
+      document.getElementById('modalContentEdit').classList.add('hidden');
+      document.getElementById('modalContentView').classList.remove('hidden');
+      const container = document.getElementById('modalViewList');
+      container.innerHTML = '';
+      document.getElementById('modalViewComment').innerText = record.comment || "无整体留言";
+      record.individuals.forEach(p => {
+        const div = document.createElement('div');
+        div.className = "flex justify-between items-center border-b border-slate-100 pb-2 last:border-0";
+        div.innerHTML = `<div><span class="font-bold text-slate-700 mr-2">${p.name}</span><span class="text-xs text-slate-400">${p.comment || ''}</span></div><div class="text-right"><div class="text-xs font-bold mb-0.5 ${p.completed ? 'text-emerald-600' : 'text-red-500'}">${p.completed ? '完成' : '缺席'}</div><div class="font-bold text-blue-600 text-sm">${p.score || 0}分</div></div>`;
+        container.appendChild(div);
+      });
+    }
+
+    window.enableEdit = () => renderModalEdit(currentModalItem);
+    async function submitSupervise() { /* Same */
+      const individuals = [];
+      for (let div of document.getElementById('modalInputs').children) {
+        individuals.push({
+          name: div.querySelector('select').dataset.name,
+          completed: Number(div.querySelector('select').value),
+          score: Number(div.querySelector('input[type="number"]').value) || null,
+          comment: div.querySelector('input[type="text"]').value
+        });
+      }
+      try {
+        await api('/submit-supervise', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            date: currentModalDate, group: currentModalItem.group, comment: document.getElementById('modalComment').value, individuals
+          })
+        });
+        alert("提交成功"); openSuperviseModal(currentModalDate);
+      } catch (e) { alert(e.message); }
+    }
+
+    window.checkNextWeek = async () => { /* Same */
+      const res = await api('/api/schedule');
+      const data = await res.json();
+      const sched = data.schedule;
+      if (sched.length === 0) { alert('暂无排班'); return; }
+      const lastDate = new Date(sched[sched.length - 1].date);
+      const nextWeek = new Date(new Date().getTime() + 7 * 86400000);
+      if (lastDate < nextWeek) {
+        if (confirm(`排班即将结束 (${lastDate.toISOString().split('T')[0]})，是否去生成新排班？`)) {
+          switchClassTab('settings');
+          const nextStart = new Date(lastDate.getTime() + 86400000).toISOString().split('T')[0];
+          document.getElementById('genStartDate').value = nextStart;
+        }
+      } else { alert('下周排班已就绪 ✅'); }
+    };
+    window.generateSummary = async () => { /* Same */
+      const start = document.getElementById('sumStartDate').value;
+      const end = document.getElementById('sumEndDate').value;
+      if (!start || !end) return alert("请选择日期");
+      const res = await api(`/api/summary?startDate=${start}&endDate=${end}`);
+      const data = await res.json();
+      document.getElementById('summaryPoster').classList.remove('hidden');
+      document.getElementById('posterDateRange').innerText = `${start} ~ ${end}`;
+      document.getElementById('posterAvg').innerText = data.avgScore;
+      if (data.bestIndividual) { document.getElementById('posterStar').innerText = data.bestIndividual.name; document.getElementById('posterStarScore').innerText = data.bestIndividual.avg; }
+      else { document.getElementById('posterStar').innerText = "--"; document.getElementById('posterStarScore').innerText = "--"; }
+      const missed = []; data.records.forEach(r => r.individuals.forEach(p => { if (!p.completed) missed.push(p.name); }));
+      document.getElementById('posterMissed').innerText = missed.length ? [...new Set(missed)].join(', ') : "全勤 🎉";
+      const daily = document.getElementById('posterDaily'); daily.innerHTML = '';
+      data.records.forEach(r => {
+        const div = document.createElement('div'); div.className = "bg-slate-50 p-3 rounded border border-slate-100 text-sm";
+        const gNames = r.group.map(x => typeof x === 'string' ? x : x.name).join('、');
+        div.innerHTML = `<div class="font-bold flex justify-between"><span>${r.date}</span><span>${gNames}</span></div><div class="text-slate-500 italic mt-1">"${r.comment || '无'}"</div>`;
+        daily.appendChild(div);
+      });
+    };
+
+    // Bind upload (Fixed)
+    const fIn = document.getElementById('fileInput');
+    fIn.onchange = () => { if (fIn.files[0]) document.getElementById('fileNameDisplay').innerText = fIn.files[0].name; };
+    document.getElementById('uploadBtn').onclick = async () => {
+      if (!fIn.files[0]) return alert("请先选择文件");
+      const formData = new FormData();
+      formData.append("file", fIn.files[0]);
+      try {
+        await api('/upload-members', { method: 'POST', body: formData, headers: {} });
+        alert("上传成功！");
+      } catch (e) { alert("上传失败: " + e.message); }
+    };
+
+  </script>
 </body>
+
 </html>
