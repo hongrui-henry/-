@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Tank Battle</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- Main Menu Overlay -->
+        <div id="main-menu" class="overlay">
+            <h1 class="neon-title">NEON TANK BATTLE</h1>
+            <div class="menu-options">
+                <button id="btn-pve" class="neon-btn">单人闯关 (AI) </button>
+                <button id="btn-pvp" class="neon-btn">双人对战 (PvP)</button>
+            </div>
+            <div class="controls-info">
+                <div class="player-controls">
+                    <h3>Player 1</h3>
+                    <p>WASD 移动</p>
+                    <p>SPACE 射击</p>
+                </div>
+                <div class="player-controls">
+                    <h3>Player 2</h3>
+                    <p>↑↓←→ 移动</p>
+                    <p>ENTER 射击</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Over Overlay -->
+        <div id="game-over" class="overlay hidden">
+            <h1 id="winner-text" class="neon-title">GAME OVER</h1>
+            <button id="btn-restart" class="neon-btn">再玩一次</button>
+            <button id="btn-menu" class="neon-btn">返回主菜单</button>
+        </div>
+
+        <!-- HUD -->
+        <div id="hud" class="hidden">
+            <div class="p1-score">P1 Health: <span id="p1-health">100</span></div>
+            <div class="p2-score">P2/Enemy Health: <span id="p2-health">100</span></div>
+        </div>
+    </div>
+
+    <!-- Scripts (Order Matters for non-modules) -->
+    <script src="js/InputHandler.js"></script>
+    <script src="js/Bullet.js"></script>
+    <script src="js/Map.js"></script>
+    <script src="js/Tank.js"></script>
+    <script src="js/AIController.js"></script>
+    <script src="js/game.js"></script>
+</body>
+
+</html>
