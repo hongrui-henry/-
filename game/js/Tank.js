@@ -9,11 +9,18 @@ class Tank {
         this.rotation = 0; // In radians
         this.speed = 0.2; // Pixels per ms
         this.rotationSpeed = 0.003; // Radians per ms
-        this.controls = controls; // { up, down, left, right, shoot }
+        this.controls = controls; // { up, down, left, right, shoot, dash }
         this.lastShotTime = 0;
         this.shootCooldown = 500; // ms
         this.health = 100;
         this.radius = 20; // For collision
+
+        // Dash
+        this.isDashing = false;
+        this.dashCooldown = 1500; // Reduced cooldown for better flow
+        this.lastDashTime = 0;
+        this.dashSpeedMultiplier = 3.5; // Slightly faster
+        this.dashDuration = 250; // Slightly longer
     }
 
     update(deltaTime, input) {
@@ -27,15 +34,24 @@ class Tank {
             this.rotation += this.rotationSpeed * deltaTime;
         }
 
+        // Dash Logic
+        if (this.controls.dash && input.isKeyDown(this.controls.dash) && Date.now() - this.lastDashTime > this.dashCooldown) {
+            this.isDashing = true;
+            this.lastDashTime = Date.now();
+            setTimeout(() => this.isDashing = false, this.dashDuration);
+        }
+
         // Movement
+        const currentSpeed = this.isDashing ? this.speed * this.dashSpeedMultiplier : this.speed;
+
         const velocity = { x: 0, y: 0 };
         if (input.isKeyDown(this.controls.up)) {
-            velocity.x = Math.cos(this.rotation) * this.speed * deltaTime;
-            velocity.y = Math.sin(this.rotation) * this.speed * deltaTime;
+            velocity.x = Math.cos(this.rotation) * currentSpeed * deltaTime;
+            velocity.y = Math.sin(this.rotation) * currentSpeed * deltaTime;
         }
         if (input.isKeyDown(this.controls.down)) {
-            velocity.x = -Math.cos(this.rotation) * this.speed * deltaTime;
-            velocity.y = -Math.sin(this.rotation) * this.speed * deltaTime;
+            velocity.x = -Math.cos(this.rotation) * currentSpeed * deltaTime;
+            velocity.y = -Math.sin(this.rotation) * currentSpeed * deltaTime;
         }
 
         // Proposed new position
@@ -89,9 +105,16 @@ class Tank {
         ctx.translate(this.x, this.y);
         ctx.rotate(this.rotation);
 
+        // Dash Trail Effect
+        if (this.isDashing) {
+            ctx.shadowBlur = 40;
+            ctx.shadowColor = '#fff';
+        }
+
         // Body
         ctx.shadowBlur = 15;
         ctx.shadowColor = this.color;
+
         ctx.strokeStyle = this.color;
         ctx.lineWidth = 2;
         ctx.fillStyle = '#000';
@@ -112,6 +135,24 @@ class Tank {
         ctx.fill();
 
         ctx.restore();
+
+        // Draw Dash Cooldown Bar
+        if (this.controls.dash) { // Only draw if tank has dash control
+            const now = Date.now();
+            const timeSinceDash = now - this.lastDashTime;
+            const cooldownRatio = Math.min(timeSinceDash / this.dashCooldown, 1);
+
+            if (cooldownRatio < 1) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.fillRect(-20, 25, 40, 4);
+
+                ctx.fillStyle = this.isDashing ? '#fff' : this.color;
+                ctx.fillRect(-20, 25, 40 * cooldownRatio, 4);
+                ctx.restore();
+            }
+        }
     }
 
     takeDamage(amount) {
